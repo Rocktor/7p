@@ -209,7 +209,7 @@ export function trainingReportMarkdown(run: TrainingRun): string {
     '',
     `- A 打过：${run.firstAPassedRound === null ? '100轮内未出现 A 已过' : `第 ${run.firstAPassedRound} 轮首次出现，座位 ${run.firstAPassedSeats.map((seat) => seat + 1).join('、')}`}`,
     `- 平均闲家总分：${run.averageAttackerPoints}`,
-    `- 闲家下台率：${percent(run.attackerDownRate)}；闲家升级率：${percent(run.attackerUpgradeRate)}；抠底成功率：${percent(run.bottomDugRate)}。`,
+    `- 庄家下台率/闲家上台率：${percent(run.attackerDownRate)}；闲家升级率：${percent(run.attackerUpgradeRate)}；抠底成功率：${percent(run.bottomDugRate)}。`,
     `- AI 决策快照：${run.totalDecisions} 个；风险 ${run.totalRisks} 个，其中 bad ${run.totalBadRisks} 个。`,
     '',
     '## 结果分档',
@@ -217,7 +217,7 @@ export function trainingReportMarkdown(run: TrainingRun): string {
     `- 0分大光：${run.outcomeCounts['host-big-shutout']} 轮`,
     `- 1-119小光：${run.outcomeCounts['host-small-shutout']} 轮`,
     `- 120-239庄家升1级：${run.outcomeCounts['host-level-up']} 轮`,
-    `- 240-359闲家下台不升级：${run.outcomeCounts['attackers-down']} 轮`,
+    `- 240-359庄家下台、闲家上台但不升级：${run.outcomeCounts['attackers-down']} 轮`,
     `- 360起闲家升级：${run.outcomeCounts['attackers-level-up']} 轮`,
     '',
     '## 风险分布',
@@ -263,7 +263,7 @@ async function writeTrainingArtifacts(run: TrainingRun, outDir: string) {
 
 function buildLearningSummary(run: TrainingRun): string[] {
   const summary = [
-    `当前策略在 ${run.completedRounds} 轮中的庄家队保升轮数为 ${hostOutcomeCount(run)}，闲家下台轮数为 ${run.outcomeCounts['attackers-down'] + run.outcomeCounts['attackers-level-up']}。`,
+    `当前策略在 ${run.completedRounds} 轮中的庄家队保升轮数为 ${hostOutcomeCount(run)}，庄家下台/闲家上台轮数为 ${run.outcomeCounts['attackers-down'] + run.outcomeCounts['attackers-level-up']}。`,
     `训练期平均每轮 AI 决策 ${round2(ratio(run.totalDecisions, run.completedRounds))} 次，bad 风险 ${round2(ratio(run.totalBadRisks, run.completedRounds))} 次。`
   ];
   if ((run.riskCodes['bury-structure'] ?? 0) > 0 || (run.riskCodes['break-structure'] ?? 0) > 0) {
@@ -288,7 +288,7 @@ function buildRolePlaySummary(run: TrainingRun): string[] {
   const worstAttacker = [...run.rounds].sort((a, b) => a.attackerPoints - b.attackerPoints)[0];
   return [
     `我作为庄家队：我的第一目标不是赢一墩，而是把闲家压在 240 以下；如果能压到 0 或 1-119，才追求多升。`,
-    `我作为闲家队：240 只是下台，不是升级；真正要冲的是 360、480 这些线，末墩抠底的倍数要围绕这些线服务。`,
+    `我作为闲家队：240 只是打下庄并上台，不是升级；真正要冲的是 360、480 这些线，末墩抠底的倍数要围绕这些线服务。`,
     `我作为复盘员：最高闲家分出现在第 ${bestAttacker?.round ?? '-'} 轮（${bestAttacker?.attackerPoints ?? 0} 分），最低闲家分出现在第 ${worstAttacker?.round ?? '-'} 轮（${worstAttacker?.attackerPoints ?? 0} 分）。`,
     `我作为训练器：最后一轮结果是 ${last?.outcome ?? '无'}，等级状态 ${last?.levelsAfter.join(' ') ?? '无'}，下一步应抽样检查高风险扣底和高分抠底轮。`
   ];

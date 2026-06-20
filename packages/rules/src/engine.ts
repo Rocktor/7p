@@ -1186,7 +1186,7 @@ function resultMessage(state: GameState): string {
   if (result.outcome === 'host-big-shutout') return `${prefix}，大光，庄家队升3级${penalty}`;
   if (result.outcome === 'host-small-shutout') return `${prefix}，小光，庄家队升2级${penalty}`;
   if (result.outcome === 'host-level-up') return `${prefix}，庄家队升1级${penalty}`;
-  if (result.outcome === 'attackers-down') return `${prefix}，闲家下台不升级${penalty}`;
+  if (result.outcome === 'attackers-down') return `${prefix}，庄家下台，闲家上台不升级${penalty}`;
   return `${prefix}，闲家升 ${result.levelDelta} 级${penalty}`;
 }
 

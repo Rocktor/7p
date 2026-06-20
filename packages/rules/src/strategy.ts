@@ -23,7 +23,7 @@ import type {
 
 const TARGET_LINES = {
   host: '闲家 <240 保升，1-119 小光升2级，0分大光升3级',
-  attackers: '闲家 240 下台不升级，360起每120分升1级，末墩抠底会放大底分',
+  attackers: '闲家 240 打下庄并上台但不升级，360起每120分升1级，末墩抠底会放大底分',
   hidden: '身份未明时先保留控牌和结构，等朋友暴露后再服务明确队伍'
 } as const;
 
@@ -73,7 +73,7 @@ export function describeUpgradeObjective(state: GameState, seat: SeatIndex): Upg
     team: 'attackers',
     target: 'attackers-down',
     scoreLine: TARGET_LINES.attackers,
-    summary: '本方按闲家队处理，先突破240分下台；360分起才进入升级收益，末墩抠底优先服务这个分档。'
+    summary: '本方按闲家队处理，先突破240分打下庄并上台；360分起才进入升级收益，末墩抠底优先服务这个分档。'
   };
 }
 

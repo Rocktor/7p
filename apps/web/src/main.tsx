@@ -564,7 +564,7 @@ function shouldShowPublicBid(room: GameState) {
 
 function outcomeText(result: NonNullable<GameState['result']>) {
   if (result.outcome === 'attackers-level-up') return `闲家升 ${result.levelDelta} 级`;
-  if (result.outcome === 'attackers-down') return '闲家下台，不升级';
+  if (result.outcome === 'attackers-down') return '庄家下台，闲家上台不升级';
   if (result.outcome === 'host-big-shutout') return '大光，庄家升 3 级';
   if (result.outcome === 'host-small-shutout') return '小光，庄家升 2 级';
   return '庄家升 1 级';
