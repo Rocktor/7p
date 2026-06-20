@@ -43,15 +43,59 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!room || !user) return;
-    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    const ws = new WebSocket(`${proto}://${location.host}/ws?roomId=${room.id}&token=${user.token}`);
-    ws.onmessage = (event) => {
-      const msg = JSON.parse(event.data);
-      if (msg.type === 'state') setRoom(msg.room);
-      if (msg.type === 'error') setError(msg.message);
+    const roomId = room?.id;
+    const token = user?.token;
+    if (!roomId || !token) return;
+
+    let closed = false;
+    let ws: WebSocket | null = null;
+    let retryTimer: number | undefined;
+    let pollTimer: number | undefined;
+
+    const fetchLatestRoom = async () => {
+      try {
+        const result = await getRoom(roomId, token);
+        if (!closed) setRoom(result.room);
+      } catch (err) {
+        if (!closed) setError(err instanceof Error ? err.message : String(err));
+      }
     };
-    return () => ws.close();
+
+    const connect = (attempt = 0) => {
+      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+      const socket = new WebSocket(`${proto}://${location.host}/ws?roomId=${roomId}&token=${token}`);
+      ws = socket;
+
+      socket.onopen = () => {
+        if (!closed) void fetchLatestRoom();
+      };
+      socket.onmessage = (event) => {
+        const msg = JSON.parse(event.data);
+        if (msg.type === 'state') setRoom(msg.room);
+        if (msg.type === 'error') setError(msg.message);
+      };
+      socket.onerror = () => {
+        socket.close();
+      };
+      socket.onclose = () => {
+        if (closed) return;
+        void fetchLatestRoom();
+        const delay = Math.min(6000, 800 * 2 ** Math.min(attempt, 3));
+        retryTimer = window.setTimeout(() => connect(attempt + 1), delay);
+      };
+    };
+
+    connect();
+    pollTimer = window.setInterval(() => {
+      if (!ws || ws.readyState !== WebSocket.OPEN) void fetchLatestRoom();
+    }, 3000);
+
+    return () => {
+      closed = true;
+      if (retryTimer) window.clearTimeout(retryTimer);
+      if (pollTimer) window.clearInterval(pollTimer);
+      ws?.close();
+    };
   }, [room?.id, user?.token]);
 
   async function refreshRooms() {
@@ -712,12 +756,20 @@ function FriendCallInput({
 }
 
 function EventLog({ room }: { room: GameState }) {
+  const visibleEvents = room.events.filter((event) => event.type !== 'ai.decision');
   return (
     <section className="event-log">
-      <h2>事件</h2>
-      {room.events.slice(-14).reverse().map((event) => (
-        <p key={event.seq}><span>#{event.seq}</span>{event.message}</p>
-      ))}
+      <div className="event-log-head">
+        <h2>事件</h2>
+        <span>{visibleEvents.length}条</span>
+      </div>
+      <div className="event-log-list" role="log">
+        {visibleEvents.length === 0 ? (
+          <p className="muted">暂无事件。</p>
+        ) : visibleEvents.slice().reverse().map((event) => (
+          <p key={event.seq}><span>#{event.seq}</span>{event.message}</p>
+        ))}
+      </div>
     </section>
   );
 }

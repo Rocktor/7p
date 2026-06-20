@@ -54,7 +54,9 @@ app.post('/api/rooms', (req, res) => {
 app.get('/api/rooms/:id', (req, res) => {
   handle(res, () => {
     const user = optionalAuth(req);
-    return { room: redactRoom(rooms.getRoom(req.params.id), user) };
+    const room = rooms.getRoom(req.params.id);
+    rooms.scheduleBots(req.params.id);
+    return { room: redactRoom(room, user) };
   });
 });
 
@@ -67,7 +69,10 @@ app.post('/api/rooms/:id/intent', (req, res) => {
 });
 
 app.get('/api/rooms/:id/replay', (req, res) => {
-  handle(res, () => ({ analysis: rooms.getReplay(req.params.id), room: redactRoom(rooms.getRoom(req.params.id), optionalAuth(req)) }));
+  handle(res, () => {
+    rooms.scheduleBots(req.params.id);
+    return { analysis: rooms.getReplay(req.params.id), room: redactRoom(rooms.getRoom(req.params.id), optionalAuth(req)) };
+  });
 });
 
 const wss = new WebSocketServer({ server, path: '/ws' });
@@ -82,7 +87,9 @@ wss.on('connection', (socket, request) => {
     return;
   }
   const client = addClient(roomId, socket, user);
-  send(socket, { type: 'state', room: redactRoom(rooms.getRoom(roomId), user) });
+  const room = rooms.getRoom(roomId);
+  rooms.scheduleBots(roomId);
+  send(socket, { type: 'state', room: redactRoom(room, user) });
 
   socket.on('message', (raw) => {
     try {

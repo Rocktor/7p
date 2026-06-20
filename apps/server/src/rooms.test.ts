@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { AppDb } from './db.js';
 import { RoomManager } from './rooms.js';
 
@@ -39,6 +39,48 @@ describe('RoomManager', () => {
     manager.applyIntent(room.id, user, { type: 'toggle-bot', seat: 0, enabled: true });
 
     expect(() => manager.applyIntent(room.id, user, { type: 'pass-counter', seat: 0 })).toThrow(/AI座位由系统接管/);
+  });
+
+  it('resumes bot play for persisted rooms after manager startup', async () => {
+    vi.useFakeTimers();
+    try {
+      const db = new AppDb(':memory:');
+      const seedManager = new RoomManager(db, () => {});
+      const room = seedManager.createRoom('test room');
+      const state = seedManager.getRoom(room.id);
+      state.phase = 'playing';
+      state.trumpSuit = 'spades';
+      state.dealerLevel = 'J';
+      state.activeSeat = 0;
+      state.currentTrick = {
+        index: 1,
+        leader: 0,
+        plays: [],
+        leadShape: null,
+        winner: null,
+        points: 0
+      };
+      state.seats[0].isBot = true;
+      state.seats[0].name = 'AI-1';
+      state.seats[0].hand = [{ id: 'bot-card', deck: 0, suit: 'spades', rank: '2' }];
+      state.seats[1].isBot = true;
+      state.seats[1].name = 'AI-2';
+      state.seats[1].hand = [{ id: 'bot-card-2', deck: 1, suit: 'spades', rank: '3' }];
+      db.saveRoom(state);
+
+      let changes = 0;
+      const manager = new RoomManager(db, () => { changes += 1; });
+
+      await vi.advanceTimersByTimeAsync(1600);
+
+      const resumed = manager.getRoom(room.id);
+      expect(resumed.currentTrick?.plays).toHaveLength(2);
+      expect(resumed.currentTrick?.plays[0].seat).toBe(0);
+      expect(resumed.currentTrick?.plays[1].seat).toBe(1);
+      expect(changes).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('strips forged strategy reports from user intents', () => {

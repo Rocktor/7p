@@ -106,14 +106,7 @@ export function logicalRankValue(card: Card, levelRank: NormalRank): number {
 }
 
 export function logicalCardKey(card: Card, trumpSuit: TrumpSuit, levelRank: NormalRank): string {
-  const door = effectiveSuit(card, trumpSuit, levelRank);
-  if (door !== 'trump') return `${door}:${card.rank}`;
-  if (card.suit === 'joker') return `trump:joker:${card.rank}`;
-  if (card.rank === levelRank) {
-    if (trumpSuit !== 'no-trump' && card.suit === trumpSuit) return `trump:main-level:${levelRank}`;
-    return `trump:off-level:${levelRank}`;
-  }
-  return `trump:${card.suit}:${card.rank}`;
+  return `${effectiveSuit(card, trumpSuit, levelRank)}:${card.suit}:${card.rank}`;
 }
 
 export function tractorRankValue(card: Card, trumpSuit: TrumpSuit, levelRank: NormalRank): number {

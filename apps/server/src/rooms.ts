@@ -20,6 +20,7 @@ export class RoomManager {
 
   constructor(private db: AppDb, private onChange: (roomId: string) => void) {
     for (const room of db.listRooms()) this.rooms.set(room.id, room);
+    for (const roomId of this.rooms.keys()) this.scheduleBots(roomId);
   }
 
   listRooms() {
@@ -68,13 +69,13 @@ export class RoomManager {
     const room = this.getRoom(roomId);
     if (!nextBotIntent(room)) return;
     const timer = setTimeout(() => {
-      this.timers.delete(roomId);
       this.driveBots(roomId);
     }, botDelay(room));
     this.timers.set(roomId, timer);
   }
 
   private driveBots(roomId: string) {
+    this.timers.delete(roomId);
     let room = this.getRoom(roomId);
     const intent = nextBotIntent(room);
     if (!intent) return;

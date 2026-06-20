@@ -409,8 +409,7 @@ describe('7人6副牌找朋友规则', () => {
       ...pair('sq', 'spades', 'Q'),
       ...pair('sk', 'spades', 'K'),
       ...pair('sa', 'spades', 'A'),
-      { id: 'off-j-heart', deck: 0, suit: 'hearts', rank: 'J' },
-      { id: 'off-j-club', deck: 0, suit: 'clubs', rank: 'J' },
+      ...pair('off-j-club', 'clubs', 'J'),
       ...pair('main-j', 'spades', 'J'),
       ...pair('small-joker', 'joker', 'SJ'),
       ...pair('big-joker', 'joker', 'BJ')
@@ -422,6 +421,19 @@ describe('7人6副牌找朋友规则', () => {
     expect(shape.effectiveSuit).toBe('trump');
     expect(shape.tupleSize).toBe(2);
     expect(shape.tractorLength).toBe(8);
+  });
+
+  it('打J黑桃主时，不同花色副J不能凑成一对', () => {
+    const cards = [
+      { id: 'off-j-heart', deck: 0, suit: 'hearts', rank: 'J' },
+      { id: 'off-j-club', deck: 0, suit: 'clubs', rank: 'J' }
+    ] as Card[];
+
+    const shape = classifyPlay(cards, 'spades', 'J');
+
+    expect(shape.kind).toBe('combo');
+    expect(shape.effectiveSuit).toBe('trump');
+    expect(shape.components).toEqual([]);
   });
 
   it('打J时副牌拖拉机也会跳过J连接10、Q、K、A', () => {
@@ -566,6 +578,38 @@ describe('7人6副牌找朋友规则', () => {
 
     expect(chosen.map((card) => card.id)).toEqual(['h7-0', 'h7-1']);
     expect(() => dispatch(state, { type: 'play', seat: 1, cardIds: chosen.map((card) => card.id) })).not.toThrow();
+  });
+
+  it('跟主对子时，不同花色副J不算有对', () => {
+    const state = createGame('mixed-off-j-not-pair');
+    state.phase = 'playing';
+    state.trumpSuit = 'spades';
+    state.dealerLevel = 'J';
+    state.activeSeat = 1;
+    const lead = [
+      { id: 's8-0', deck: 0, suit: 'spades', rank: '8' },
+      { id: 's8-1', deck: 1, suit: 'spades', rank: '8' }
+    ] as Card[];
+    state.currentTrick = {
+      index: 1,
+      leader: 0,
+      plays: [{ seat: 0, cards: lead }],
+      leadShape: classifyPlay(lead, 'spades', 'J'),
+      winner: null,
+      points: 0
+    };
+    state.seats[1].hand = [
+      { id: 'off-j-heart', deck: 0, suit: 'hearts', rank: 'J' },
+      { id: 'off-j-club', deck: 0, suit: 'clubs', rank: 'J' },
+      { id: 's2', deck: 0, suit: 'spades', rank: '2' },
+      { id: 's3', deck: 0, suit: 'spades', rank: '3' }
+    ] as Card[];
+
+    const chosen = legalCardsForSimplePlay(state, 1);
+
+    expect(chosen.map((card) => card.id)).toEqual(['s2', 's3']);
+    expect(() => dispatch(state, { type: 'play', seat: 1, cardIds: ['s2', 's3'] })).not.toThrow();
+    expect(() => dispatch(state, { type: 'play', seat: 1, cardIds: ['off-j-heart', 'off-j-club'] })).not.toThrow();
   });
 
   it('2♦3♦4♦5♦不能当顺子/拖拉机，甩牌失败时强制只出最小一手', () => {

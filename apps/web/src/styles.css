@@ -1114,6 +1114,7 @@ p {
 .control-rail {
   display: grid;
   gap: 14px;
+  min-height: 0;
 }
 
 .return-confirm {
@@ -1128,6 +1129,33 @@ p {
   padding: 16px;
   display: grid;
   gap: 12px;
+}
+
+.event-log {
+  min-height: 0;
+}
+
+.event-log-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.event-log-head span {
+  color: rgba(37, 29, 24, 0.58);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.event-log-list {
+  display: grid;
+  gap: 0;
+  max-height: min(460px, calc(100vh - 340px));
+  min-height: 160px;
+  overflow-y: auto;
+  padding-right: 4px;
+  overscroll-behavior: contain;
 }
 
 .action-stack,
@@ -1156,6 +1184,10 @@ p {
   line-height: 1.45;
   padding-bottom: 8px;
   border-bottom: 1px solid rgba(37, 29, 24, 0.08);
+}
+
+.event-log-list p {
+  padding-top: 8px;
 }
 
 .friend-call-row {
