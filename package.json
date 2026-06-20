@@ -11,7 +11,8 @@
     "build": "npm run build -w @zpy7/rules && npm run build -w @zpy7/server && npm run build -w @zpy7/web",
     "dev": "concurrently -n server,web -c cyan,magenta \"npm run dev -w @zpy7/server\" \"npm run dev -w @zpy7/web\"",
     "test": "npm run test -w @zpy7/rules && npm run test -w @zpy7/server",
-    "check": "tsc -b tsconfig.json"
+    "check": "tsc -b tsconfig.json",
+    "train": "npm run build -w @zpy7/rules && node packages/rules/dist/training.js"
   },
   "devDependencies": {
     "@types/express": "^5.0.3",

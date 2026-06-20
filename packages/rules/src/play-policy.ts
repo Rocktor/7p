@@ -78,7 +78,7 @@ function chooseLeadWithMemory(state: GameState, seat: SeatIndex, memory: TableMe
       cards: fallback,
       score: 10,
       summary: '没有可用副牌首出，只能出主；该动作需要复盘主牌控制权。',
-      risks: [trumpRisk]
+      risks: [forcedTrumpRisk(trumpRisk)]
     };
   }
 
@@ -153,6 +153,14 @@ function leadTrumpRisk(
     code: 'lead-trump-risk',
     severity: 'bad',
     message: '已知仍有人可能有主，庄家队/暗友阶段继续调主可能把控制权交给闲家。'
+  };
+}
+
+function forcedTrumpRisk(risk: StrategyRisk): StrategyRisk {
+  return {
+    ...risk,
+    severity: 'warn',
+    message: '已知仍有人可能有主，但本手没有可用副牌首出，只能出主并等待复盘主牌控制权。'
   };
 }
 

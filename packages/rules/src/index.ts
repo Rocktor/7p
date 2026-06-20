@@ -6,3 +6,4 @@ export * from './replay.js';
 export * from './strategy.js';
 export * from './memory.js';
 export * from './play-policy.js';
+export * from './training.js';
