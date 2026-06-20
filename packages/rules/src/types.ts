@@ -122,6 +122,8 @@ export type StrategyRisk = {
     | 'bury-structure'
     | 'break-structure'
     | 'lead-trump-risk'
+    | 'unsafe-point-lead'
+    | 'unsafe-point-play'
     | 'single-card-thinking'
     | 'self-friend'
     | 'unknown-team';

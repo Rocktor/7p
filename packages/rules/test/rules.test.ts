@@ -1091,4 +1091,130 @@ describe('7人6副牌找朋友规则', () => {
     expect(result.events.some((event) => event.type === 'toss.fail')).toBe(false);
     expect(result.currentTrick?.plays[0].cards.map((card) => card.id)).toEqual(['s10', 'sk', 'h7']);
   });
+
+  it('当前最大牌是敌方且自己不能赢时，AI优先垫0分低牌', () => {
+    const state = createGame('avoid-feeding-points-to-enemy');
+    state.phase = 'playing';
+    state.dealerSeat = 0;
+    state.trumpSuit = 'spades';
+    state.dealerLevel = '7';
+    state.activeSeat = 6;
+    state.friendCalls = [{
+      id: 'friend-ai7',
+      suit: 'clubs',
+      nth: 1,
+      seen: 1,
+      matchedBy: 6,
+      matchedTrick: 1,
+      pointsAtReveal: 0
+    } satisfies FriendCall];
+    const lead = { id: 'enemy-dk', deck: 0, suit: 'diamonds', rank: 'K' } as Card;
+    state.currentTrick = {
+      index: 3,
+      leader: 5,
+      plays: [{ seat: 5, cards: [lead] }],
+      leadShape: classifyPlay([lead], 'spades', '7'),
+      winner: 5,
+      points: 10
+    };
+    state.seats[6].isBot = true;
+    state.seats[6].hand = [
+      { id: 'ai7-d10', deck: 0, suit: 'diamonds', rank: '10' },
+      { id: 'ai7-d2', deck: 0, suit: 'diamonds', rank: '2' },
+      { id: 'ai7-c3', deck: 0, suit: 'clubs', rank: '3' }
+    ] as Card[];
+
+    const intent = decideBotIntent(state, 6);
+
+    expect(intent?.type).toBe('play');
+    if (intent?.type !== 'play') return;
+    expect(intent.cardIds).toEqual(['ai7-d2']);
+    expect(intent.strategy?.candidates?.some((candidate) => candidate.id === 'point-safe-follow')).toBe(true);
+  });
+
+  it('当前最大牌是本方且后手无威胁时，AI允许把10分送进本方墩', () => {
+    const state = createGame('allow-safe-team-points');
+    state.phase = 'playing';
+    state.dealerSeat = 0;
+    state.trumpSuit = 'spades';
+    state.dealerLevel = '7';
+    state.activeSeat = 6;
+    state.friendCalls = [{
+      id: 'friend-ai7-safe',
+      suit: 'clubs',
+      nth: 1,
+      seen: 1,
+      matchedBy: 6,
+      matchedTrick: 1,
+      pointsAtReveal: 0
+    } satisfies FriendCall];
+    const lead = { id: 'host-dk', deck: 0, suit: 'diamonds', rank: 'K' } as Card;
+    state.currentTrick = {
+      index: 4,
+      leader: 0,
+      plays: [
+        { seat: 0, cards: [lead] },
+        { seat: 1, cards: [{ id: 'safe-d3-1', deck: 0, suit: 'diamonds', rank: '3' } as Card] },
+        { seat: 2, cards: [{ id: 'safe-d4-2', deck: 0, suit: 'diamonds', rank: '4' } as Card] },
+        { seat: 3, cards: [{ id: 'safe-d6-3', deck: 0, suit: 'diamonds', rank: '6' } as Card] },
+        { seat: 4, cards: [{ id: 'safe-d8-4', deck: 0, suit: 'diamonds', rank: '8' } as Card] },
+        { seat: 5, cards: [{ id: 'safe-d9-5', deck: 0, suit: 'diamonds', rank: '9' } as Card] }
+      ],
+      leadShape: classifyPlay([lead], 'spades', '7'),
+      winner: 0,
+      points: 10
+    };
+    state.seats[6].isBot = true;
+    state.seats[6].hand = [
+      { id: 'safe-d10', deck: 0, suit: 'diamonds', rank: '10' },
+      { id: 'safe-d2', deck: 0, suit: 'diamonds', rank: '2' }
+    ] as Card[];
+
+    const intent = decideBotIntent(state, 6);
+
+    expect(intent?.type).toBe('play');
+    if (intent?.type !== 'play') return;
+    expect(intent.cardIds).toEqual(['safe-d10']);
+  });
+
+  it('首出单张10/K未被记忆证明安全时，AI改出0分低风险牌', () => {
+    const state = createGame('avoid-unsafe-point-lead');
+    state.phase = 'playing';
+    state.dealerSeat = 0;
+    state.trumpSuit = 'spades';
+    state.dealerLevel = '7';
+    state.activeSeat = 6;
+    state.friendCalls = [{
+      id: 'friend-ai7-lead',
+      suit: 'clubs',
+      nth: 1,
+      seen: 1,
+      matchedBy: 6,
+      matchedTrick: 1,
+      pointsAtReveal: 0
+    } satisfies FriendCall];
+    state.currentTrick = {
+      index: 5,
+      leader: 6,
+      plays: [],
+      leadShape: null,
+      winner: null,
+      points: 0
+    };
+    state.seats[6].isBot = true;
+    state.seats[6].hand = [
+      { id: 'unsafe-d10', deck: 0, suit: 'diamonds', rank: '10' },
+      { id: 'unsafe-c2', deck: 0, suit: 'clubs', rank: '2' },
+      { id: 'unsafe-h3', deck: 0, suit: 'hearts', rank: '3' }
+    ] as Card[];
+
+    const intent = decideBotIntent(state, 6);
+
+    expect(intent?.type).toBe('play');
+    if (intent?.type !== 'play') return;
+    expect(intent.cardIds).not.toEqual(['unsafe-d10']);
+    const selected = state.seats[6].hand.filter((card) => intent.cardIds.includes(card.id));
+    expect(sumPoints(selected)).toBe(0);
+    expect(intent.strategy?.candidates?.some((candidate) => candidate.id === 'point-safe-lead')).toBe(true);
+  });
 });
