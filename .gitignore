@@ -1,0 +1,11 @@
+node_modules
+dist
+*.tsbuildinfo
+data/*.db
+data/*.db-shm
+data/*.db-wal
+**/data/*.db
+**/data/*.db-shm
+**/data/*.db-wal
+work/
+.DS_Store

@@ -1,0 +1,8 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./packages/rules" },
+    { "path": "./apps/server" },
+    { "path": "./apps/web" }
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "name": "zhao-pengyou-7p",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build -w @zpy7/rules && npm run build -w @zpy7/server && npm run build -w @zpy7/web",
+    "dev": "concurrently -n server,web -c cyan,magenta \"npm run dev -w @zpy7/server\" \"npm run dev -w @zpy7/web\"",
+    "test": "npm run test -w @zpy7/rules && npm run test -w @zpy7/server",
+    "check": "tsc -b tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.3",
+    "@types/node": "^24.3.0",
+    "@types/react": "^19.1.12",
+    "@types/react-dom": "^19.1.9",
+    "@types/ws": "^8.18.1",
+    "@vitejs/plugin-react": "^5.0.0",
+    "concurrently": "^9.2.1",
+    "playwright": "^1.61.0",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.7",
+    "vitest": "^3.2.4"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "lucide-react": "^0.544.0",
+    "nanoid": "^5.1.6",
+    "ws": "^8.18.3"
+  }
+}
