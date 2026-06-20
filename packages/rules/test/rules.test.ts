@@ -1215,6 +1215,120 @@ describe('7人6副牌找朋友规则', () => {
     expect(intent.strategy?.candidates?.some((candidate) => candidate.id === 'point-safe-follow')).toBe(true);
   });
 
+  it('当前最大牌已属本方时，AI优先喂分且不浪费大王覆盖队友', () => {
+    const state = createGame('feed-points-before-saving-control-on-team-trick');
+    state.phase = 'playing';
+    state.dealerSeat = 5;
+    state.trumpSuit = 'spades';
+    state.dealerLevel = 'J';
+    state.activeSeat = 2;
+    state.friendCalls = [
+      {
+        id: 'friend-host-ai4',
+        suit: 'hearts',
+        nth: 2,
+        seen: 2,
+        matchedBy: 3,
+        matchedTrick: 4,
+        pointsAtReveal: 0
+      },
+      {
+        id: 'friend-host-ai6',
+        suit: 'clubs',
+        nth: 3,
+        seen: 3,
+        matchedBy: 5,
+        matchedTrick: 3,
+        pointsAtReveal: 85
+      }
+    ];
+    const lead = { id: 'team-sK', deck: 2, suit: 'spades', rank: 'K' } as Card;
+    const teammateWinner = { id: 'team-bj1', deck: 0, suit: 'joker', rank: 'BJ' } as Card;
+    state.currentTrick = {
+      index: 10,
+      leader: 0,
+      plays: [
+        { seat: 0, cards: [lead] },
+        { seat: 1, cards: [teammateWinner] }
+      ],
+      leadShape: classifyPlay([lead], 'spades', 'J'),
+      winner: 1,
+      points: 10
+    };
+    state.seats[2].isBot = true;
+    state.seats[2].hand = [
+      { id: 'ai3-bj6', deck: 5, suit: 'joker', rank: 'BJ' },
+      { id: 'ai3-sK', deck: 5, suit: 'spades', rank: 'K' },
+      { id: 'ai3-s2', deck: 0, suit: 'spades', rank: '2' },
+      { id: 'ai3-s4', deck: 0, suit: 'spades', rank: '4' },
+      { id: 'ai3-c3', deck: 0, suit: 'clubs', rank: '3' }
+    ] as Card[];
+
+    const intent = decideBotIntent(state, 2);
+
+    expect(intent?.type).toBe('play');
+    if (intent?.type !== 'play') return;
+    expect(intent.cardIds).toEqual(['ai3-sK']);
+    expect(intent.strategy?.candidates?.some((candidate) => candidate.id === 'control-save-follow')).toBe(true);
+  });
+
+  it('本方安全赢墩时，AI不硬拆K对去喂分', () => {
+    const state = createGame('avoid-breaking-king-pair-to-feed-points');
+    state.phase = 'playing';
+    state.dealerSeat = 5;
+    state.trumpSuit = 'spades';
+    state.dealerLevel = 'J';
+    state.activeSeat = 2;
+    state.friendCalls = [
+      {
+        id: 'friend-host-ai4',
+        suit: 'hearts',
+        nth: 2,
+        seen: 2,
+        matchedBy: 3,
+        matchedTrick: 4,
+        pointsAtReveal: 0
+      },
+      {
+        id: 'friend-host-ai6',
+        suit: 'clubs',
+        nth: 3,
+        seen: 3,
+        matchedBy: 5,
+        matchedTrick: 3,
+        pointsAtReveal: 85
+      }
+    ];
+    const lead = { id: 'pair-sK', deck: 2, suit: 'spades', rank: 'K' } as Card;
+    const teammateWinner = { id: 'pair-bj1', deck: 0, suit: 'joker', rank: 'BJ' } as Card;
+    state.currentTrick = {
+      index: 10,
+      leader: 0,
+      plays: [
+        { seat: 0, cards: [lead] },
+        { seat: 1, cards: [teammateWinner] }
+      ],
+      leadShape: classifyPlay([lead], 'spades', 'J'),
+      winner: 1,
+      points: 10
+    };
+    state.seats[2].isBot = true;
+    state.seats[2].hand = [
+      { id: 'pair-bj6', deck: 5, suit: 'joker', rank: 'BJ' },
+      { id: 'pair-sK1', deck: 4, suit: 'spades', rank: 'K' },
+      { id: 'pair-sK2', deck: 5, suit: 'spades', rank: 'K' },
+      { id: 'pair-s2', deck: 0, suit: 'spades', rank: '2' },
+      { id: 'pair-c3', deck: 0, suit: 'clubs', rank: '3' }
+    ] as Card[];
+
+    const intent = decideBotIntent(state, 2);
+
+    expect(intent?.type).toBe('play');
+    if (intent?.type !== 'play') return;
+    expect(intent.cardIds).toEqual(['pair-s2']);
+    expect(intent.strategy?.candidates?.some((candidate) => candidate.id === 'control-save-follow')).toBe(true);
+  });
+
   it('当前最大牌是本方且后手无威胁时，AI允许把10分送进本方墩', () => {
     const state = createGame('allow-safe-team-points');
     state.phase = 'playing';

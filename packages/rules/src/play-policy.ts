@@ -124,6 +124,9 @@ function chooseLeadWithMemory(state: GameState, seat: SeatIndex, memory: TableMe
 }
 
 function chooseFollowWithPointSafety(state: GameState, seat: SeatIndex, memory: TableMemory, fallback: Card[]): ScoredCards {
+  const controlSaved = controlSavingFollowAlternative(state, seat, memory, fallback);
+  if (controlSaved) return controlSaved;
+
   if (sumPoints(fallback) === 0) {
     return {
       cards: fallback,
@@ -164,6 +167,90 @@ function chooseFollowWithPointSafety(state: GameState, seat: SeatIndex, memory: 
       cardIds: fallback.map((card) => card.id)
     }]
   };
+}
+
+function controlSavingFollowAlternative(state: GameState, seat: SeatIndex, memory: TableMemory, fallback: Card[]): ScoredCards | null {
+  const trick = state.currentTrick;
+  if (!trick?.leadShape || trick.leadShape.count !== 1) return null;
+  if (currentWinnerRelation(state, seat) !== 'teammate') return null;
+  if (!fallback.some((card) => isPremiumControlCard(card, memory))) return null;
+
+  const leadDoor = trick.leadShape.effectiveSuit;
+  if (leadDoor === 'mixed') return null;
+  const matching = state.seats[seat].hand.filter((card) => effectiveSuit(card, memory.trumpSuit, memory.levelRank) === leadDoor);
+  if (matching.length === 0) return null;
+  const fallbackIds = new Set(fallback.map((card) => card.id));
+  const alternatives = matching.filter((card) => !fallbackIds.has(card.id));
+  if (alternatives.length === 0) {
+    return {
+      cards: fallback,
+      score: 25,
+      summary: '当前最大牌已属本方，但没有可替代的同门低牌，只能按合法基线跟出控制牌。',
+      risks: [{
+        code: 'waste-control-follow',
+        severity: 'warn',
+        message: '本方已赢墩时仍被迫跟出大王/级牌等控制牌，后续需要复盘前序保牌空间。',
+        cardIds: fallback.map((card) => card.id)
+      }]
+    };
+  }
+
+  const nonPremium = alternatives.filter((card) => !isPremiumControlCard(card, memory));
+  const canFeedPoints = currentWinnerCanSafelyKeepTrick(state, seat, memory, leadDoor);
+  const pointFeed = canFeedPoints ? bestSafePointFeed(nonPremium, matching, memory) : null;
+  if (pointFeed) {
+    return {
+      cards: [pointFeed],
+      score: 115,
+      summary: '当前最大牌已属本方且安全，先把不破坏结构的分牌送进本方墩，同时保留大王/级牌控制。',
+      risks: []
+    };
+  }
+
+  const zeroPoint = nonPremium.filter((card) => pointValue(card) === 0);
+  const pool = zeroPoint.length > 0 ? zeroPoint : nonPremium.length > 0 ? nonPremium : alternatives;
+  const selected = lowestPointCards(pool, memory).slice(0, 1);
+  if (selected.length === 0) return null;
+  return {
+    cards: selected,
+    score: 98,
+    summary: '当前最大牌已属本方，不用大王/级牌覆盖队友，改跟低牌保留后续控制。',
+    risks: []
+  };
+}
+
+function currentWinnerCanSafelyKeepTrick(state: GameState, seat: SeatIndex, memory: TableMemory, door: Door): boolean {
+  return laterThreatLow(state, seat, memory, door) || currentWinningPlayIsUnbeatable(state, memory);
+}
+
+function currentWinningPlayIsUnbeatable(state: GameState, memory: TableMemory): boolean {
+  const trick = state.currentTrick;
+  if (!trick || trick.leadShape?.count !== 1 || trick.winner === null) return false;
+  const winningPlay = trick.plays.find((play) => play.seat === trick.winner);
+  if (!winningPlay || winningPlay.cards.length !== 1) return false;
+  const card = winningPlay.cards[0];
+  return card.suit === 'joker' && card.rank === 'BJ' && effectiveSuit(card, memory.trumpSuit, memory.levelRank) === 'trump';
+}
+
+function bestSafePointFeed(candidates: Card[], matching: Card[], memory: TableMemory): Card | null {
+  const pointCards = candidates.filter((card) => pointValue(card) > 0 && !breaksLogicalGroup(card, matching, memory));
+  return pointCards.sort((a, b) => {
+    return pointValue(b) - pointValue(a) ||
+      effectiveRankValue(a, memory.trumpSuit, memory.levelRank) - effectiveRankValue(b, memory.trumpSuit, memory.levelRank) ||
+      a.id.localeCompare(b.id);
+  })[0] ?? null;
+}
+
+function breaksLogicalGroup(card: Card, cards: Card[], memory: TableMemory): boolean {
+  return cards.filter((item) => logicalCardKey(item, memory.trumpSuit, memory.levelRank) === logicalCardKey(card, memory.trumpSuit, memory.levelRank)).length >= 2;
+}
+
+function isPremiumControlCard(card: Card, memory: TableMemory): boolean {
+  if (card.suit === 'joker') return true;
+  if (card.rank === memory.levelRank) return true;
+  return pointValue(card) === 0 &&
+    effectiveSuit(card, memory.trumpSuit, memory.levelRank) === 'trump' &&
+    effectiveRankValue(card, memory.trumpSuit, memory.levelRank) >= 14;
 }
 
 function pointFollowSafety(
@@ -526,7 +613,8 @@ function leadCandidatesForReport(
 function followCandidatesForReport(fallback: Card[], selected: ScoredCards, memory: TableMemory): StrategyCandidate[] {
   const candidates: StrategyCandidate[] = [];
   if (!sameCards(fallback, selected.cards)) {
-    candidates.push(toCandidate('point-safe-follow', selected));
+    const id = selected.summary.includes('控制') ? 'control-save-follow' : 'point-safe-follow';
+    candidates.push(toCandidate(id, selected));
   }
   candidates.push({
     id: 'legal-baseline',

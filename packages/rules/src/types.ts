@@ -124,6 +124,7 @@ export type StrategyRisk = {
     | 'lead-trump-risk'
     | 'unsafe-point-lead'
     | 'unsafe-point-play'
+    | 'waste-control-follow'
     | 'single-card-thinking'
     | 'self-friend'
     | 'unknown-team';
