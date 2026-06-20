@@ -2,10 +2,12 @@ import {
   COUNTER_SUIT_ORDER,
   type Card,
   type EffectiveSuit,
+  type JokerRank,
   LEVEL_ORDER,
   type NormalRank,
   NORMAL_SUITS,
   type NormalSuit,
+  type TrumpSuit,
   baseCardKey,
   cardLabel,
   createDecks,
@@ -42,11 +44,12 @@ const DECK_COUNT = 6;
 const HAND_SIZE = 45;
 const KITTY_SIZE = 9;
 const TUPLE_SIZES_DESC = [6, 5, 4, 3, 2] as const;
-const TRUMP_SUIT_NAME: Record<NormalSuit, string> = {
+const TRUMP_SUIT_NAME: Record<TrumpSuit, string> = {
   spades: '黑桃',
   hearts: '红桃',
   clubs: '梅花',
-  diamonds: '方片'
+  diamonds: '方片',
+  'no-trump': '无主'
 };
 
 type CardGroupEntry = {
@@ -179,8 +182,14 @@ function player(state: GameState, seat: SeatIndex): PlayerState {
   return state.seats[requireSeat(seat)];
 }
 
+function seatForUser(state: GameState, userId: string): SeatIndex | null {
+  const found = state.seats.find((p) => p.userId === userId);
+  return found ? found.seat : null;
+}
+
 function sit(state: GameState, seat: SeatIndex, userId: string, name: string) {
   assertPhase(state, ['lobby', 'finished']);
+  if (seatForUser(state, userId) !== null) throw new Error('已经入座，请先离席再坐到其他座位');
   const p = player(state, seat);
   if (p.userId && p.userId !== userId) throw new Error('座位已被占用');
   p.userId = userId;
@@ -190,15 +199,19 @@ function sit(state: GameState, seat: SeatIndex, userId: string, name: string) {
 }
 
 function leaveSeat(state: GameState, seat: SeatIndex, userId: string) {
-  assertPhase(state, ['lobby', 'finished']);
   const p = player(state, seat);
   if (p.userId !== userId) throw new Error('只能离开自己的座位');
-  state.seats[seat] = emptyPlayer(seat);
-  addEvent(state, 'seat.leave', `${p.name} 离开 ${seat + 1} 号位`, { seat });
+  const name = p.name;
+  p.userId = null;
+  p.isBot = true;
+  p.name = `AI-${seat + 1}`;
+  addEvent(state, 'seat.leave', `${name} 离席，AI 接管 ${seat + 1} 号位`, { seat, userId });
 }
 
 function toggleBot(state: GameState, seat: SeatIndex, enabled: boolean, name?: string) {
+  assertPhase(state, ['lobby', 'finished']);
   const p = player(state, seat);
+  if (p.userId) throw new Error('真人座位请先离席再交给AI');
   if (enabled) {
     p.userId = null;
     p.isBot = true;
@@ -297,10 +310,16 @@ export function parseTrumpBid(
   levelRank: NormalRank,
   source: TrumpBid['source'] = 'hand'
 ): TrumpBid {
-  const jokerCount = cards.filter(isJoker).length;
+  const jokerCards = cards.filter(isJoker);
+  const jokerCount = jokerCards.length;
   if (jokerCount < 2) throw new Error('亮主/反底必须至少有任意两张王');
+  const normalCards = cards.filter((card) => card.suit !== 'joker');
   const levelCards = cards.filter((card) => card.suit !== 'joker' && card.rank === levelRank);
-  if (levelCards.length === 0) throw new Error('亮主/反底必须带同花级牌');
+  if (levelCards.length === 0) {
+    if (normalCards.length > 0) throw new Error('亮主/反底只能使用王和级牌');
+    return parseNoTrumpBid(cards, jokerCards, seat, levelRank, source);
+  }
+  if (normalCards.length !== levelCards.length) throw new Error('亮主/反底只能使用王和级牌');
   const suits = new Set(levelCards.map((card) => card.suit));
   if (suits.size !== 1) throw new Error('级牌必须同花色');
   const suit = levelCards[0].suit as NormalSuit;
@@ -317,13 +336,42 @@ export function parseTrumpBid(
   };
 }
 
-function bidStrength(bid: TrumpBid): number {
-  return bid.levelCardCount * 10 + COUNTER_SUIT_ORDER.indexOf(bid.suit);
+function parseNoTrumpBid(
+  cards: Card[],
+  jokerCards: Card[],
+  seat: SeatIndex,
+  levelRank: NormalRank,
+  source: TrumpBid['source']
+): TrumpBid {
+  const small = jokerCards.filter((card) => card.rank === 'SJ');
+  const big = jokerCards.filter((card) => card.rank === 'BJ');
+  if (small.length < 1 || big.length < 1) throw new Error('反无主必须有1张小王和1张大王作为2猫');
+  const smallExtras = small.length - 1;
+  const bigExtras = big.length - 1;
+  if (smallExtras > 0 && bigExtras > 0) throw new Error('反无主额外王必须是同一种王');
+  if (smallExtras === 0 && bigExtras === 0) throw new Error('反无主必须带同类小王或大王');
+  const noTrumpRank = smallExtras > 0 ? 'SJ' : bigExtras > 0 ? 'BJ' : undefined;
+  return {
+    seat,
+    suit: 'no-trump',
+    levelRank,
+    levelCardCount: Math.max(smallExtras, bigExtras),
+    jokerCount: jokerCards.length,
+    noTrumpRank,
+    cardIds: cards.map((card) => card.id),
+    cards: [...cards],
+    action: source === 'kitty' ? 'kitty' : 'bid',
+    source
+  };
+}
+
+export function trumpBidStrength(bid: TrumpBid): number {
+  return bid.levelCardCount * 10 + (bid.suit === 'no-trump' ? COUNTER_SUIT_ORDER.length : COUNTER_SUIT_ORDER.indexOf(bid.suit));
 }
 
 function beatsBid(next: TrumpBid, current: TrumpBid | null): boolean {
   if (!current) return true;
-  return bidStrength(next) > bidStrength(current);
+  return trumpBidStrength(next) > trumpBidStrength(current);
 }
 
 function makeBid(state: GameState, seat: SeatIndex, cardIds: string[]) {
@@ -397,7 +445,17 @@ function inferKittyBid(state: GameState): TrumpBid {
 }
 
 function bidText(bid: TrumpBid) {
+  if (bid.suit === 'no-trump') {
+    const extra = bid.levelCardCount > 0 ? ` + ${bid.levelCardCount} 张${jokerRankName(bid.noTrumpRank)}` : '';
+    return `2猫${extra} · 无主`;
+  }
   return `${bid.jokerCount} 张王 + ${bid.levelCardCount} 张${TRUMP_SUIT_NAME[bid.suit]} ${bid.levelRank}`;
+}
+
+function jokerRankName(rank: JokerRank | undefined) {
+  if (rank === 'SJ') return '小王';
+  if (rank === 'BJ') return '大王';
+  return '同类王';
 }
 
 function buryKitty(state: GameState, seat: SeatIndex, cardIds: string[]) {
@@ -453,7 +511,7 @@ function callFriends(state: GameState, seat: SeatIndex, calls: { suit: NormalSui
   const seen = new Set<string>();
   state.friendCalls = calls.map((call, index) => {
     if (!NORMAL_SUITS.includes(call.suit)) throw new Error('叫A花色无效');
-    if (call.suit === state.trumpSuit) throw new Error('不能叫主花色A');
+    if (state.trumpSuit !== 'no-trump' && call.suit === state.trumpSuit) throw new Error('不能叫主花色A');
     if (call.nth < 1 || call.nth > DECK_COUNT) throw new Error('第N张A必须在1到6之间');
     const key = `${call.suit}:${call.nth}`;
     if (seen.has(key)) throw new Error('不能重复叫完全相同的A');
@@ -512,6 +570,7 @@ function playCards(state: GameState, seat: SeatIndex, cardIds: string[]) {
   p.hand = removeCards(p.hand, cards.map((card) => card.id));
   trick.plays.push({ seat, cards });
   trick.points += sumPoints(cards);
+  updateTrickWinner(state, trick);
   detectFriends(state, seat, cards);
   addEvent(state, 'play.cards', `${p.name} 打出 ${cards.map(cardLabel).join(' ')}`, { seat, cardIds: cards.map((card) => card.id), shape });
 
@@ -561,7 +620,7 @@ function forceSmallestTossComponent(state: GameState, cards: Card[]): { cards: C
   return { cards: smallest, shape: forcedShape };
 }
 
-export function classifyPlay(cards: Card[], trumpSuit: NormalSuit, levelRank: NormalRank): PlayShape {
+export function classifyPlay(cards: Card[], trumpSuit: TrumpSuit, levelRank: NormalRank): PlayShape {
   if (cards.length === 0) throw new Error('必须选择至少一张牌');
   const suits = new Set(cards.map((card) => effectiveSuit(card, trumpSuit, levelRank)));
   const playSuit = suits.size === 1 ? ([...suits][0] as EffectiveSuit) : 'mixed';
@@ -595,7 +654,7 @@ export function classifyPlay(cards: Card[], trumpSuit: NormalSuit, levelRank: No
   return { kind: 'combo', count: cards.length, effectiveSuit: playSuit, tupleSize: 1, tractorLength: 1, strength: maxStrength, label: comboLabel(components), components };
 }
 
-function groupByLogicalCard(cards: Card[], trumpSuit: NormalSuit, levelRank: NormalRank): Card[][] {
+function groupByLogicalCard(cards: Card[], trumpSuit: TrumpSuit, levelRank: NormalRank): Card[][] {
   const groups = new Map<string, Card[]>();
   for (const card of cards) {
     const key = `${effectiveSuit(card, trumpSuit, levelRank)}:${baseCardKey(card)}`;
@@ -649,7 +708,7 @@ function validateFollow(
   handBeforePlay: Card[],
   selected: Card[],
   leadShape: PlayShape,
-  trumpSuit: NormalSuit,
+  trumpSuit: TrumpSuit,
   levelRank: NormalRank
 ) {
   if (selected.length !== leadShape.count) throw new Error(`必须跟 ${leadShape.count} 张牌`);
@@ -671,7 +730,7 @@ function validateFollowStructure(
   matchingInHand: Card[],
   matchingSelected: Card[],
   leadShape: PlayShape,
-  trumpSuit: NormalSuit,
+  trumpSuit: TrumpSuit,
   levelRank: NormalRank
 ) {
   const requirements = followRequirements(matchingInHand, leadShape, trumpSuit, levelRank);
@@ -693,7 +752,7 @@ function validateFollowStructure(
 function followRequirements(
   cards: Card[],
   leadShape: PlayShape,
-  trumpSuit: NormalSuit,
+  trumpSuit: TrumpSuit,
   levelRank: NormalRank
 ): FollowRequirement[] {
   const requirements: FollowRequirement[] = [];
@@ -733,7 +792,7 @@ function followRequirements(
   return requirements;
 }
 
-function availableGroupEntries(cards: Card[], trumpSuit: NormalSuit, levelRank: NormalRank): CardGroupEntry[] {
+function availableGroupEntries(cards: Card[], trumpSuit: TrumpSuit, levelRank: NormalRank): CardGroupEntry[] {
   return groupByLogicalCard(cards, trumpSuit, levelRank).map((group) => ({
     group,
     remaining: [...group]
@@ -792,7 +851,7 @@ function consumeTupleGroups(
 function selectRequiredFollowCards(
   pool: Card[],
   lead: PlayShape,
-  trumpSuit: NormalSuit,
+  trumpSuit: TrumpSuit,
   levelRank: NormalRank,
   preferHigh: boolean
 ): Card[] {
@@ -816,17 +875,7 @@ function formatTractorName(tupleSize: number, tractorLength: number): string {
 }
 
 function completeTrick(state: GameState, trick: Trick) {
-  if (!state.trumpSuit || !trick.leadShape) throw new Error('牌墩状态错误');
-  let winner = trick.plays[0].seat;
-  let winningShape = classifyPlay(trick.plays[0].cards, state.trumpSuit, state.dealerLevel);
-  for (const play of trick.plays.slice(1)) {
-    const shape = classifyPlay(play.cards, state.trumpSuit, state.dealerLevel);
-    if (beatsPlay(shape, winningShape, trick.leadShape)) {
-      winner = play.seat;
-      winningShape = shape;
-    }
-  }
-  trick.winner = winner;
+  const winner = updateTrickWinner(state, trick);
   player(state, winner).personalPoints += trick.points;
   state.completedTricks.push(trick);
   addEvent(state, 'trick.complete', `${player(state, winner).name} 收下第 ${trick.index} 墩，${trick.points} 分`, {
@@ -840,6 +889,21 @@ function completeTrick(state: GameState, trick: Trick) {
   }
   state.currentTrick = newTrick(state.completedTricks.length + 1, winner);
   state.activeSeat = winner;
+}
+
+function updateTrickWinner(state: GameState, trick: Trick): SeatIndex {
+  if (!state.trumpSuit || !trick.leadShape) throw new Error('牌墩状态错误');
+  let winner = trick.plays[0].seat;
+  let winningShape = classifyPlay(trick.plays[0].cards, state.trumpSuit, state.dealerLevel);
+  for (const play of trick.plays.slice(1)) {
+    const shape = classifyPlay(play.cards, state.trumpSuit, state.dealerLevel);
+    if (beatsPlay(shape, winningShape, trick.leadShape)) {
+      winner = play.seat;
+      winningShape = shape;
+    }
+  }
+  trick.winner = winner;
+  return winner;
 }
 
 function beatsPlay(candidate: PlayShape, current: PlayShape, lead: PlayShape): boolean {
@@ -945,7 +1009,7 @@ function finishRound(state: GameState) {
 }
 
 export function scoreOutcome(attackerPoints: number): { outcome: RoundResult['outcome']; levelDelta: number; winner: 'host' | 'attackers' } {
-  if (attackerPoints < 60) return { outcome: 'host-big-shutout', levelDelta: 3, winner: 'host' };
+  if (attackerPoints === 0) return { outcome: 'host-big-shutout', levelDelta: 3, winner: 'host' };
   if (attackerPoints < 120) return { outcome: 'host-small-shutout', levelDelta: 2, winner: 'host' };
   if (attackerPoints < 240) return { outcome: 'host-level-up', levelDelta: 1, winner: 'host' };
   return { outcome: 'attackers-level-up', levelDelta: Math.floor(attackerPoints / 120) - 1, winner: 'attackers' };
@@ -962,19 +1026,20 @@ function applyMandatoryBottomPenalty(
 
   const rank = state.dealerLevel;
   const trickCards = lastTrick.plays.flatMap((play) => play.cards);
-  const mainHits = trickCards.filter((card) => card.suit === state.trumpSuit && card.rank === rank);
+  const mainHits = state.trumpSuit === 'no-trump' ? [] : trickCards.filter((card) => card.suit === state.trumpSuit && card.rank === rank);
   const offHits = trickCards.filter((card) => card.suit !== 'joker' && card.suit !== state.trumpSuit && card.rank === rank);
   const kind = mainHits.length > 0 ? 'main' : offHits.length > 0 ? 'off' : null;
   if (!kind) return null;
 
-  const target = mandatoryPenaltyTarget(rank, kind);
+  const target = fixedMandatoryPenaltyTarget(rank, kind);
   const affected = hostTeamSeats(state).flatMap((seat) => {
     const teammate = player(state, seat);
     const from = teammate.level;
-    if (!shouldDropToTarget(from, target)) return [];
-    teammate.level = target;
-    resetMandatoryFlagsAfterDrop(teammate, target);
-    return [{ seat, from, to: target }];
+    const to = mandatoryPenaltyTargetForPlayer(rank, kind, from);
+    if (!shouldDropToTarget(from, to)) return [];
+    teammate.level = to;
+    resetMandatoryFlagsAfterDrop(teammate, to);
+    return [{ seat, from, to }];
   });
 
   return {
@@ -986,9 +1051,35 @@ function applyMandatoryBottomPenalty(
   };
 }
 
-function mandatoryPenaltyTarget(rank: 'J' | 'A', kind: 'main' | 'off'): NormalRank {
-  if (rank === 'J') return kind === 'main' ? '7' : '9';
+function fixedMandatoryPenaltyTarget(rank: 'J' | 'A', kind: 'main' | 'off'): NormalRank | null {
+  if (rank === 'J') return kind === 'main' ? '7' : null;
   return kind === 'main' ? 'J' : 'K';
+}
+
+function mandatoryPenaltyTargetForPlayer(rank: 'J' | 'A', kind: 'main' | 'off', from: NormalRank): NormalRank {
+  if (rank === 'J' && kind === 'off') return offJPenaltyTarget(from);
+  const target = fixedMandatoryPenaltyTarget(rank, kind);
+  if (!target) return from;
+  return target;
+}
+
+function offJPenaltyTarget(from: NormalRank): NormalRank {
+  const targets: Record<NormalRank, NormalRank> = {
+    '2': '2',
+    '3': '3',
+    '4': '4',
+    '5': '5',
+    '6': '6',
+    '7': '7',
+    '8': '7',
+    '9': '7',
+    '10': '8',
+    J: '9',
+    Q: '9',
+    K: '10',
+    A: 'J'
+  };
+  return targets[from];
 }
 
 function shouldDropToTarget(from: NormalRank, target: NormalRank): boolean {
@@ -1026,7 +1117,8 @@ function resultMessage(state: GameState): string {
 
 function mandatoryPenaltyMessage(state: GameState, penalty: NonNullable<RoundResult['mandatoryBottomPenalty']>) {
   const affected = penalty.affected.map((item) => `${player(state, item.seat).name}${item.from}->${item.to}`).join('、');
-  return `${penalty.kind === 'main' ? '主' : '副'}${penalty.rank}抠底，庄家队打回 ${penalty.target}${affected ? `（${affected}）` : ''}`;
+  const target = penalty.target ? `打回 ${penalty.target}` : '按个人级数打回';
+  return `${penalty.kind === 'main' ? '主' : '副'}${penalty.rank}抠底，庄家队${target}${affected ? `（${affected}）` : ''}`;
 }
 
 export function hostTeamSeats(state: GameState): SeatIndex[] {
@@ -1068,7 +1160,7 @@ export function legalCardsForSimplePlay(state: GameState, seat: SeatIndex): Card
   return lowestCards(p.hand, lead.count, state.trumpSuit, state.dealerLevel);
 }
 
-function chooseLeadCards(hand: Card[], trumpSuit: NormalSuit, levelRank: NormalRank): Card[] {
+function chooseLeadCards(hand: Card[], trumpSuit: TrumpSuit, levelRank: NormalRank): Card[] {
   const candidates: Card[][] = [];
   for (const suit of ['trump', ...NORMAL_SUITS] as EffectiveSuit[]) {
     const pool = hand.filter((card) => effectiveSuit(card, trumpSuit, levelRank) === suit);
@@ -1088,7 +1180,7 @@ function chooseLeadCards(hand: Card[], trumpSuit: NormalSuit, levelRank: NormalR
     .sort((a, b) => b.score - a.score)[0]?.cards ?? [sortCards(hand, trumpSuit, levelRank)[0]];
 }
 
-function leadCandidateScore(cards: Card[], trumpSuit: NormalSuit, levelRank: NormalRank): number {
+function leadCandidateScore(cards: Card[], trumpSuit: TrumpSuit, levelRank: NormalRank): number {
   const shape = classifyPlay(cards, trumpSuit, levelRank);
   const structure = shape.kind === 'tractor' ? 90 : shape.kind === 'tuple' ? 40 : 0;
   return sumPoints(cards) * 15 + structure + shape.count * 3 + shape.strength / 100;
@@ -1097,7 +1189,7 @@ function leadCandidateScore(cards: Card[], trumpSuit: NormalSuit, levelRank: Nor
 function chooseCardsForLeadShape(
   pool: Card[],
   lead: PlayShape,
-  trumpSuit: NormalSuit,
+  trumpSuit: TrumpSuit,
   levelRank: NormalRank,
   preferHigh: boolean
 ): Card[] {
@@ -1120,7 +1212,7 @@ function fillCardsForLeadShape(
   pool: Card[],
   lead: PlayShape,
   count: number,
-  trumpSuit: NormalSuit,
+  trumpSuit: TrumpSuit,
   levelRank: NormalRank,
   preferHigh: boolean
 ): Card[] {
@@ -1136,7 +1228,7 @@ function fillCardsForLeadShape(
 
 function selectTupleGroups(
   pool: Card[],
-  trumpSuit: NormalSuit,
+  trumpSuit: TrumpSuit,
   levelRank: NormalRank,
   tupleSize: number,
   groupsNeeded: number,
@@ -1163,7 +1255,7 @@ function selectTupleGroups(
 
 function findTractorSelection(
   pool: Card[],
-  trumpSuit: NormalSuit,
+  trumpSuit: TrumpSuit,
   levelRank: NormalRank,
   tupleSize: number,
   tractorLength: number,
@@ -1184,11 +1276,11 @@ function findTractorSelection(
   return runs[0].flatMap((group) => group.slice(0, tupleSize));
 }
 
-function lowestCards(cards: Card[], count: number, trumpSuit: NormalSuit, levelRank: NormalRank): Card[] {
+function lowestCards(cards: Card[], count: number, trumpSuit: TrumpSuit, levelRank: NormalRank): Card[] {
   return sortCards(cards, trumpSuit, levelRank).slice(0, count);
 }
 
-function highestCards(cards: Card[], count: number, trumpSuit: NormalSuit, levelRank: NormalRank): Card[] {
+function highestCards(cards: Card[], count: number, trumpSuit: TrumpSuit, levelRank: NormalRank): Card[] {
   return sortCards(cards, trumpSuit, levelRank).slice(-count);
 }
 

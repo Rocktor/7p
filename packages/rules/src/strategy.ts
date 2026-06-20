@@ -4,6 +4,7 @@ import {
   type EffectiveSuit,
   type NormalRank,
   type NormalSuit,
+  type TrumpSuit,
   cardLabel,
   effectiveRankValue,
   effectiveSuit,
@@ -21,7 +22,7 @@ import type {
 } from './types.js';
 
 const TARGET_LINES = {
-  host: '闲家 <240 保升，<120 小光升2级，<60 大光升3级',
+  host: '闲家 <240 保升，1-119 小光升2级，0分大光升3级',
   attackers: '闲家 >=240 下台并升级，末墩抠底会放大底分',
   hidden: '身份未明时先保留控牌和结构，等朋友暴露后再服务明确队伍'
 } as const;
@@ -248,7 +249,7 @@ export function strategyDecisionMessage(report: StrategyDecisionReport): string 
   return `AI-${report.seat + 1} ${actionLabel(report.action)}：${report.objective.scoreLine}${suffix}`;
 }
 
-export function summarizeHandStructure(cards: Card[], trumpSuit: NormalSuit, levelRank: NormalRank) {
+export function summarizeHandStructure(cards: Card[], trumpSuit: TrumpSuit, levelRank: NormalRank) {
   const groups = groupCards(cards, trumpSuit, levelRank);
   const doors = new Map<EffectiveSuit, { count: number; points: number; controls: number; tupleGroups: number }>();
   for (const card of cards) {
@@ -306,7 +307,7 @@ export function learningSummary(state: GameState): string {
   return `本局记录 ${reports.length} 个 AI 决策快照，其中 ${risky.length} 个带风险；扣底样本 ${buryReports.length} 个。`;
 }
 
-function scoreBuryCards(cards: Card[], trumpSuit: NormalSuit, levelRank: NormalRank) {
+function scoreBuryCards(cards: Card[], trumpSuit: TrumpSuit, levelRank: NormalRank) {
   const groups = groupCards(cards, trumpSuit, levelRank);
   const groupSize = new Map(groups.map((group) => [group.key, group.cards.length]));
   const suitSize = new Map<NormalSuit, number>();
@@ -335,7 +336,7 @@ function scoreBuryCards(cards: Card[], trumpSuit: NormalSuit, levelRank: NormalR
 function detectBuryRisks(
   handBefore: Card[],
   selected: Card[],
-  trumpSuit: NormalSuit,
+  trumpSuit: TrumpSuit,
   levelRank: NormalRank
 ): StrategyRisk[] {
   const risks: StrategyRisk[] = [];
@@ -400,7 +401,7 @@ function detectBuryRisks(
   return risks;
 }
 
-function pointOnlyBury(cards: Card[], trumpSuit: NormalSuit, levelRank: NormalRank): Card[] {
+function pointOnlyBury(cards: Card[], trumpSuit: TrumpSuit, levelRank: NormalRank): Card[] {
   return sortCards(cards.filter((card) => card.rank !== 'A'), trumpSuit, levelRank)
     .sort((a, b) => pointValue(a) - pointValue(b))
     .slice(0, 9);
@@ -409,7 +410,7 @@ function pointOnlyBury(cards: Card[], trumpSuit: NormalSuit, levelRank: NormalRa
 function structureReasons(
   handBefore: Card[],
   handAfter: Card[],
-  trumpSuit: NormalSuit,
+  trumpSuit: TrumpSuit,
   levelRank: NormalRank
 ): string[] {
   const before = summarizeHandStructure(handBefore, trumpSuit, levelRank);
@@ -431,7 +432,7 @@ function estimateHostPower(state: GameState, seat: SeatIndex): number {
   return Math.min(100, structure.trumpCount * 2 + controls * 7 + strongGroups * 8);
 }
 
-function groupCards(cards: Card[], trumpSuit: NormalSuit, levelRank: NormalRank): GroupInfo[] {
+function groupCards(cards: Card[], trumpSuit: TrumpSuit, levelRank: NormalRank): GroupInfo[] {
   const groups = new Map<string, GroupInfo>();
   for (const card of cards) {
     const key = groupKey(card, trumpSuit, levelRank);
@@ -444,13 +445,13 @@ function groupCards(cards: Card[], trumpSuit: NormalSuit, levelRank: NormalRank)
   return [...groups.values()];
 }
 
-function groupKey(card: Card, trumpSuit: NormalSuit, levelRank: NormalRank): string {
+function groupKey(card: Card, trumpSuit: TrumpSuit, levelRank: NormalRank): string {
   const door = effectiveSuit(card, trumpSuit, levelRank);
   if (card.suit === 'joker') return `${door}:${card.rank}`;
   return `${door}:${card.suit}:${card.rank}`;
 }
 
-function rankKeepValue(card: Card, trumpSuit: NormalSuit, levelRank: NormalRank): number {
+function rankKeepValue(card: Card, trumpSuit: TrumpSuit, levelRank: NormalRank): number {
   if (card.suit === 'joker') return 80;
   if (card.rank === levelRank) return 60;
   const value = effectiveRankValue(card, trumpSuit, levelRank);
@@ -460,7 +461,7 @@ function rankKeepValue(card: Card, trumpSuit: NormalSuit, levelRank: NormalRank)
   return 0;
 }
 
-function isControlCard(card: Card, trumpSuit: NormalSuit, levelRank: NormalRank): boolean {
+function isControlCard(card: Card, trumpSuit: TrumpSuit, levelRank: NormalRank): boolean {
   return effectiveSuit(card, trumpSuit, levelRank) === 'trump' ||
     card.suit === 'joker' ||
     card.rank === levelRank;
@@ -482,7 +483,7 @@ function formatCards(cards: Card[]): string {
   return cards.length ? cards.map(cardLabel).join(' ') : '[]';
 }
 
-function requireTrumpSuit(state: GameState): NormalSuit {
+function requireTrumpSuit(state: GameState): TrumpSuit {
   return state.trumpSuit ?? state.currentBid?.suit ?? 'spades';
 }
 

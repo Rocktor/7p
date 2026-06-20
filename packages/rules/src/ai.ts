@@ -1,5 +1,6 @@
-import { NORMAL_SUITS, type NormalSuit } from './cards.js';
-import { legalCardsForSimplePlay, parseTrumpBid } from './engine.js';
+import { NORMAL_SUITS, type Card } from './cards.js';
+import { parseTrumpBid, trumpBidStrength } from './engine.js';
+import { chooseUpgradePlay } from './play-policy.js';
 import { chooseFriendCallsForUpgrade, chooseUpgradeBury, reportSimpleDecision } from './strategy.js';
 import type { GameIntent, GameState, SeatIndex } from './types.js';
 
@@ -52,15 +53,9 @@ export function decideBotIntent(state: GameState, seat: SeatIndex): GameIntent |
   }
 
   if (state.phase === 'playing' && state.activeSeat === seat) {
-    const cards = legalCardsForSimplePlay(state, seat);
-    if (cards.length > 0) {
-      const cardIds = cards.map((card) => card.id);
-      return {
-        type: 'play',
-        seat,
-        cardIds,
-        strategy: reportSimpleDecision(state, seat, 'play', cardIds, ['按当前牌型约束选择合法牌，再交给复盘判断是否服务升级分档。'])
-      };
+    const play = chooseUpgradePlay(state, seat);
+    if (play) {
+      return { type: 'play', seat, cardIds: play.cards.map((card) => card.id), strategy: play.report };
     }
   }
 
@@ -71,26 +66,28 @@ function findBid(state: GameState, seat: SeatIndex): string[] | null {
   const hand = state.seats[seat].hand;
   const jokers = hand.filter((card) => card.suit === 'joker').slice(0, 2);
   if (jokers.length < 2) return null;
+  const candidates: Card[][] = [];
   for (const suit of NORMAL_SUITS) {
     const levelCards = hand.filter((card) => card.suit === suit && card.rank === state.dealerLevel);
-    if (levelCards.length > 0) {
-      const cards = [...jokers, levelCards[0]];
+    if (levelCards.length > 0) candidates.push([...jokers, ...levelCards]);
+  }
+
+  const small = hand.filter((card) => card.rank === 'SJ');
+  const big = hand.filter((card) => card.rank === 'BJ');
+  if (small.length >= 1 && big.length >= 2) candidates.push([small[0], big[0], ...big.slice(1)]);
+  if (small.length >= 2 && big.length >= 1) candidates.push([small[0], big[0], ...small.slice(1)]);
+
+  const currentStrength = state.currentBid ? trumpBidStrength(state.currentBid) : -1;
+  return candidates
+    .flatMap((cards) => {
       try {
         const parsed = parseTrumpBid(cards, seat, state.dealerLevel);
-        const current = state.currentBid;
-        const strength = parsed.levelCardCount * 10 + suitStrength(parsed.suit);
-        const currentStrength = current ? current.levelCardCount * 10 + suitStrength(current.suit) : -1;
-        if (strength > currentStrength) return cards.map((card) => card.id);
+        return trumpBidStrength(parsed) > currentStrength ? [{ cards, strength: trumpBidStrength(parsed) }] : [];
       } catch {
-        return null;
+        return [];
       }
-    }
-  }
-  return null;
-}
-
-function suitStrength(suit: NormalSuit): number {
-  return { diamonds: 0, clubs: 1, hearts: 2, spades: 3 }[suit];
+    })
+    .sort((a, b) => b.strength - a.strength)[0]?.cards.map((card) => card.id) ?? null;
 }
 
 export function replayScoreSnapshot(state: GameState) {

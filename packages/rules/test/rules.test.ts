@@ -10,11 +10,14 @@ import {
   createGame,
   decideBotIntent,
   dispatch,
+  effectiveRankValue,
+  effectiveSuit,
   hostTeamSeats,
   legalCardsForSimplePlay,
   parseTrumpBid,
   scoreOutcome,
-  sumPoints
+  sumPoints,
+  trumpBidStrength
 } from '../src/index.js';
 
 function fillBots(state: GameState): GameState {
@@ -48,6 +51,19 @@ function manualBidCards(prefix: string, suit: Card['suit'], levelRank: Card['ran
       deck: index,
       suit,
       rank: levelRank
+    }))
+  ] as Card[];
+}
+
+function noTrumpBidCards(prefix: string, extraRank: 'SJ' | 'BJ', extraCount: number): Card[] {
+  return [
+    { id: `${prefix}-cat-sj`, deck: 0, suit: 'joker', rank: 'SJ' },
+    { id: `${prefix}-cat-bj`, deck: 0, suit: 'joker', rank: 'BJ' },
+    ...Array.from({ length: extraCount }, (_, index) => ({
+      id: `${prefix}-extra-${extraRank}-${index + 1}`,
+      deck: index + 1,
+      suit: 'joker',
+      rank: extraRank
     }))
   ] as Card[];
 }
@@ -95,6 +111,36 @@ function stateBeforeMandatoryBottomPenalty(rank: 'J' | 'A', finalCard: Card): Ga
 }
 
 describe('7人6副牌找朋友规则', () => {
+  it('玩家必须先离席才能换座，离席后由AI接管', () => {
+    let state = createGame('seat-flow');
+    state = dispatch(state, { type: 'sit', seat: 0, userId: 'u1', name: '玩家A' }).state;
+
+    expect(() => dispatch(state, { type: 'sit', seat: 1, userId: 'u1', name: '玩家A' })).toThrow(/先离席/);
+    expect(() => dispatch(state, { type: 'toggle-bot', seat: 0, enabled: true })).toThrow(/先离席/);
+
+    state = dispatch(state, { type: 'leave-seat', seat: 0, userId: 'u1' }).state;
+    expect(state.seats[0]).toMatchObject({ userId: null, isBot: true, name: 'AI-1' });
+
+    state = dispatch(state, { type: 'sit', seat: 1, userId: 'u1', name: '玩家A' }).state;
+    expect(state.seats[1]).toMatchObject({ userId: 'u1', isBot: false, name: '玩家A' });
+  });
+
+  it('牌局中离席会保留手牌并交给AI继续接管', () => {
+    const state = createGame('leave-during-play');
+    const hand = [{ id: 'held-card', deck: 0, suit: 'spades', rank: '7' } as Card];
+    state.phase = 'playing';
+    state.activeSeat = 0;
+    state.seats[0].userId = 'u1';
+    state.seats[0].name = '玩家A';
+    state.seats[0].hand = hand;
+
+    const result = dispatch(state, { type: 'leave-seat', seat: 0, userId: 'u1' }).state;
+
+    expect(result.seats[0]).toMatchObject({ userId: null, isBot: true, name: 'AI-1' });
+    expect(result.seats[0].hand).toEqual(hand);
+    expect(result.activeSeat).toBe(0);
+  });
+
   it('发7人各45张，底牌9张，首轮随机庄家打自己的级', () => {
     const state = startSeeded('deal');
     expect(state.phase).toBe('bidding');
@@ -118,6 +164,68 @@ describe('7人6副牌找朋友规则', () => {
       { id: 'w3', deck: 0, suit: 'diamonds', rank: state.dealerLevel }
     ] as Card[];
     expect(parseTrumpBid(weaker, 1, state.dealerLevel).suit).toBe('diamonds');
+  });
+
+  it('无主用2猫加同类王反同张数级牌，少一张压不过', () => {
+    const state = startSeeded('no-trump-bid');
+    const suited = parseTrumpBid(manualBidCards('suited', 'spades', state.dealerLevel, 3), 0, state.dealerLevel);
+    const noTrump = parseTrumpBid(noTrumpBidCards('nt', 'SJ', 3), 1, state.dealerLevel);
+    const weakNoTrump = parseTrumpBid(noTrumpBidCards('weak-nt', 'BJ', 2), 2, state.dealerLevel);
+
+    expect(noTrump.suit).toBe('no-trump');
+    expect(noTrump.levelCardCount).toBe(3);
+    expect(noTrump.noTrumpRank).toBe('SJ');
+    expect(trumpBidStrength(noTrump)).toBeGreaterThan(trumpBidStrength(suited));
+    expect(trumpBidStrength(weakNoTrump)).toBeLessThan(trumpBidStrength(suited));
+    expect(() => parseTrumpBid(noTrumpBidCards('bare-nt', 'SJ', 0), 3, state.dealerLevel)).toThrow(/同类小王或大王/);
+    expect(() => parseTrumpBid([
+      { id: 'mix-sj-1', deck: 0, suit: 'joker', rank: 'SJ' },
+      { id: 'mix-bj-1', deck: 0, suit: 'joker', rank: 'BJ' },
+      { id: 'mix-sj-2', deck: 1, suit: 'joker', rank: 'SJ' },
+      { id: 'mix-bj-2', deck: 1, suit: 'joker', rank: 'BJ' }
+    ] as Card[], 4, state.dealerLevel)).toThrow(/同一种王/);
+  });
+
+  it('无主时级牌仍是常主，但不存在主花色级牌加成', () => {
+    const spadeNine = { id: 's9', deck: 0, suit: 'spades', rank: '9' } as Card;
+    const heartNine = { id: 'h9', deck: 0, suit: 'hearts', rank: '9' } as Card;
+
+    expect(effectiveSuit(spadeNine, 'spades', '9')).toBe('trump');
+    expect(effectiveRankValue(spadeNine, 'spades', '9')).toBeGreaterThan(effectiveRankValue(heartNine, 'spades', '9'));
+    expect(effectiveSuit(spadeNine, 'no-trump', '9')).toBe('trump');
+    expect(effectiveSuit(heartNine, 'no-trump', '9')).toBe('trump');
+    expect(effectiveRankValue(spadeNine, 'no-trump', '9')).toBe(effectiveRankValue(heartNine, 'no-trump', '9'));
+  });
+
+  it('一墩未结束时实时记录当前最大出牌座位', () => {
+    let state = createGame('current-trick-winner');
+    state.phase = 'playing';
+    state.dealerSeat = 0;
+    state.trumpSuit = 'spades';
+    state.dealerLevel = '9';
+    state.activeSeat = 0;
+    state.currentTrick = {
+      index: 1,
+      leader: 0,
+      plays: [],
+      leadShape: null,
+      winner: null,
+      points: 0
+    };
+    state.seats[0].hand = [
+      { id: 'lead-7-1', deck: 0, suit: 'clubs', rank: '7' },
+      { id: 'lead-7-2', deck: 1, suit: 'clubs', rank: '7' }
+    ] as Card[];
+    state.seats[1].hand = [
+      { id: 'follow-j-1', deck: 0, suit: 'clubs', rank: 'J' },
+      { id: 'follow-j-2', deck: 1, suit: 'clubs', rank: 'J' }
+    ] as Card[];
+
+    state = dispatch(state, { type: 'play', seat: 0, cardIds: state.seats[0].hand.map((card) => card.id) }).state;
+    expect(state.currentTrick?.winner).toBe(0);
+
+    state = dispatch(state, { type: 'play', seat: 1, cardIds: state.seats[1].hand.map((card) => card.id) }).state;
+    expect(state.currentTrick?.winner).toBe(1);
   });
 
   it('亮主后庄家立即拿底，不存在亮主后的继续等待阶段', () => {
@@ -265,8 +373,10 @@ describe('7人6副牌找朋友规则', () => {
     expect(sumPoints(kitty) * 2 ** 2).toBe(60);
   });
 
-  it('计分分档按60大光、120小光、120到239庄家升1级、240下台', () => {
-    expect(scoreOutcome(59)).toEqual({ outcome: 'host-big-shutout', levelDelta: 3, winner: 'host' });
+  it('计分分档按0分大光、1到119小光、120到239庄家升1级、240下台', () => {
+    expect(scoreOutcome(0)).toEqual({ outcome: 'host-big-shutout', levelDelta: 3, winner: 'host' });
+    expect(scoreOutcome(1)).toEqual({ outcome: 'host-small-shutout', levelDelta: 2, winner: 'host' });
+    expect(scoreOutcome(59)).toEqual({ outcome: 'host-small-shutout', levelDelta: 2, winner: 'host' });
     expect(scoreOutcome(119)).toEqual({ outcome: 'host-small-shutout', levelDelta: 2, winner: 'host' });
     expect(scoreOutcome(120)).toEqual({ outcome: 'host-level-up', levelDelta: 1, winner: 'host' });
     expect(scoreOutcome(239)).toEqual({ outcome: 'host-level-up', levelDelta: 1, winner: 'host' });
@@ -577,25 +687,50 @@ describe('7人6副牌找朋友规则', () => {
   });
 
   it.each([
-    ['主J抠底，庄家打回7', 'J', { id: 'main-j', deck: 0, suit: 'spades', rank: 'J' }, 'main', '7'],
-    ['副J抠底，庄家打回9', 'J', { id: 'off-j', deck: 0, suit: 'hearts', rank: 'J' }, 'off', '9'],
-    ['主A抠底，庄家打回J', 'A', { id: 'main-a', deck: 0, suit: 'spades', rank: 'A' }, 'main', 'J'],
-    ['副A抠底，庄家打回K', 'A', { id: 'off-a', deck: 0, suit: 'hearts', rank: 'A' }, 'off', 'K']
-  ] as const)('%s', (_name, rank, finalCard, kind, target) => {
+    ['主J抠底，庄家打回7', 'J', { id: 'main-j', deck: 0, suit: 'spades', rank: 'J' }, 'main', '7', '7'],
+    ['副J抠底，庄家队按个人级数打回', 'J', { id: 'off-j', deck: 0, suit: 'hearts', rank: 'J' }, 'off', null, '9'],
+    ['主A抠底，庄家打回J', 'A', { id: 'main-a', deck: 0, suit: 'spades', rank: 'A' }, 'main', 'J', 'J'],
+    ['副A抠底，庄家打回K', 'A', { id: 'off-a', deck: 0, suit: 'hearts', rank: 'A' }, 'off', 'K', 'K']
+  ] as const)('%s', (_name, rank, finalCard, kind, resultTarget, playerTarget) => {
     const state = stateBeforeMandatoryBottomPenalty(rank, finalCard as Card);
     const result = dispatch(state, { type: 'play', seat: 1, cardIds: [finalCard.id] }).state;
-    expect(result.seats[0].level).toBe(target as NormalRank);
-    expect(result.seats[2].level).toBe(target as NormalRank);
+    expect(result.seats[0].level).toBe(playerTarget as NormalRank);
+    expect(result.seats[2].level).toBe(playerTarget as NormalRank);
     expect(result.result?.mandatoryBottomPenalty).toMatchObject({
       rank,
       kind,
-      target,
+      target: resultTarget,
       affected: [
-        { seat: 0, from: rank, to: target },
-        { seat: 2, from: rank, to: target }
+        { seat: 0, from: rank, to: playerTarget },
+        { seat: 2, from: rank, to: playerTarget }
       ]
     });
     expect(result.events.at(-1)?.message).toContain(`${kind === 'main' ? '主' : '副'}${rank}抠底`);
+  });
+
+  it.each([
+    ['7', '7', false],
+    ['8', '7', true],
+    ['9', '7', true],
+    ['10', '8', true],
+    ['J', '9', true],
+    ['Q', '9', true],
+    ['K', '10', true],
+    ['A', 'J', true]
+  ] as const)('副J抠底时朋友%s按距离底一半且至少2级打回%s', (from, target, affected) => {
+    const finalCard = { id: `off-j-${from}`, deck: 0, suit: 'hearts', rank: 'J' } as Card;
+    const state = stateBeforeMandatoryBottomPenalty('J', finalCard);
+    state.seats[2].level = from as NormalRank;
+    const result = dispatch(state, { type: 'play', seat: 1, cardIds: [finalCard.id] }).state;
+
+    expect(result.seats[2].level).toBe(target);
+    const friendPenalty = result.result?.mandatoryBottomPenalty?.affected.find((item) => item.seat === 2);
+    if (affected) {
+      expect(friendPenalty).toMatchObject({ seat: 2, from, to: target });
+    } else {
+      expect(friendPenalty).toBeUndefined();
+    }
+    expect(result.result?.mandatoryBottomPenalty?.target).toBeNull();
   });
 
   it('下一局会清空上一局结算态', () => {
@@ -725,5 +860,92 @@ describe('7人6副牌找朋友规则', () => {
       expect(call.nth).toBeGreaterThan(ownAces);
     }
     expect(intent.strategy?.risks.some((risk) => risk.code === 'self-friend')).toBe(false);
+  });
+
+  it('庄家队不能在对手仍可能有主时只按牌面继续调主', () => {
+    const state = createGame('avoid-bad-trump-lead');
+    state.phase = 'playing';
+    state.dealerSeat = 0;
+    state.trumpSuit = 'spades';
+    state.dealerLevel = '7';
+    state.activeSeat = 0;
+    state.currentTrick = {
+      index: 1,
+      leader: 0,
+      plays: [],
+      leadShape: null,
+      winner: null,
+      points: 0
+    };
+    state.seats[0].isBot = true;
+    state.seats[0].hand = [
+      { id: 's10-1', deck: 0, suit: 'spades', rank: '10' },
+      { id: 's10-2', deck: 1, suit: 'spades', rank: '10' },
+      { id: 'h2-1', deck: 0, suit: 'hearts', rank: '2' },
+      { id: 'h2-2', deck: 1, suit: 'hearts', rank: '2' }
+    ] as Card[];
+    for (let seat = 1; seat < 7; seat += 1) {
+      state.seats[seat].hand = [{ id: `unknown-c3-${seat}`, deck: seat, suit: 'clubs', rank: '3' } as Card];
+    }
+
+    const intent = decideBotIntent(state, 0);
+
+    expect(intent?.type).toBe('play');
+    if (intent?.type !== 'play') return;
+    expect(intent.cardIds).toEqual(['h2-1', 'h2-2']);
+    expect(intent.strategy?.candidates?.some((candidate) => candidate.id === 'non-trump-lead')).toBe(true);
+  });
+
+  it('全场只剩AI有主时，AI会主动甩主兑现独占控制', () => {
+    const state = createGame('safe-trump-toss');
+    state.phase = 'playing';
+    state.dealerSeat = 6;
+    state.trumpSuit = 'spades';
+    state.dealerLevel = '7';
+    state.activeSeat = 6;
+    const leadTrump = { id: 'old-s2', deck: 0, suit: 'spades', rank: '2' } as Card;
+    state.completedTricks = [{
+      index: 1,
+      leader: 6,
+      plays: [
+        { seat: 6, cards: [leadTrump] },
+        { seat: 0, cards: [{ id: 'old-c2-0', deck: 0, suit: 'clubs', rank: '2' } as Card] },
+        { seat: 1, cards: [{ id: 'old-c2-1', deck: 1, suit: 'clubs', rank: '2' } as Card] },
+        { seat: 2, cards: [{ id: 'old-c2-2', deck: 2, suit: 'clubs', rank: '2' } as Card] },
+        { seat: 3, cards: [{ id: 'old-c2-3', deck: 3, suit: 'clubs', rank: '2' } as Card] },
+        { seat: 4, cards: [{ id: 'old-c2-4', deck: 4, suit: 'clubs', rank: '2' } as Card] },
+        { seat: 5, cards: [{ id: 'old-c2-5', deck: 5, suit: 'clubs', rank: '2' } as Card] }
+      ],
+      leadShape: classifyPlay([leadTrump], 'spades', '7'),
+      winner: 6,
+      points: 0
+    }];
+    state.currentTrick = {
+      index: 2,
+      leader: 6,
+      plays: [],
+      leadShape: null,
+      winner: null,
+      points: 0
+    };
+    for (let seat = 0; seat < 6; seat += 1) {
+      state.seats[seat].hand = [{ id: `left-c3-${seat}`, deck: seat, suit: 'clubs', rank: '3' } as Card];
+    }
+    state.seats[6].isBot = true;
+    state.seats[6].hand = [
+      { id: 's10', deck: 0, suit: 'spades', rank: '10' },
+      { id: 'sk', deck: 0, suit: 'spades', rank: 'K' },
+      { id: 'h7', deck: 0, suit: 'hearts', rank: '7' }
+    ] as Card[];
+
+    const intent = decideBotIntent(state, 6);
+
+    expect(intent?.type).toBe('play');
+    if (intent?.type !== 'play') return;
+    expect(intent.cardIds).toEqual(['s10', 'sk', 'h7']);
+    expect(intent.strategy?.candidates?.some((candidate) => candidate.id === 'safe-toss')).toBe(true);
+    const result = dispatch(state, intent).state;
+    expect(result.events.some((event) => event.type === 'toss.fail')).toBe(false);
+    expect(result.currentTrick?.plays[0].cards.map((card) => card.id)).toEqual(['s10', 'sk', 'h7']);
   });
 });

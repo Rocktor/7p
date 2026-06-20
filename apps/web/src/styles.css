@@ -319,6 +319,7 @@ p {
   display: grid;
   place-items: center;
   box-shadow: 0 5px 9px rgba(0, 0, 0, 0.2);
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease, filter 160ms ease;
 }
 
 .mini-card:first-child {
@@ -347,6 +348,13 @@ p {
 
 .mini-card.joker {
   color: var(--green);
+}
+
+.mini-card.winning {
+  border-color: rgba(255, 224, 115, 0.96);
+  filter: saturate(1.16) contrast(1.04);
+  transform: translateY(-2px);
+  box-shadow: 0 0 0 2px rgba(244, 204, 92, 0.72), 0 8px 14px rgba(0, 0, 0, 0.28);
 }
 
 .public-bid-showcase {
@@ -724,6 +732,10 @@ p {
   border-color: #f3d27c;
 }
 
+.seat.mine {
+  border-color: rgba(143, 36, 51, 0.72);
+}
+
 .seat.host-team {
   color: white;
   background:
@@ -905,6 +917,11 @@ p {
 .seat-avatar-toggle.bot-on {
   color: white;
   background: #2f261c;
+}
+
+.seat-leave-button {
+  color: white;
+  background: #8f2433;
 }
 
 .seat.host-team .seat-avatar-toggle {

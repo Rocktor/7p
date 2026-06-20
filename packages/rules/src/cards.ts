@@ -1,5 +1,6 @@
 export const NORMAL_SUITS = ['spades', 'hearts', 'clubs', 'diamonds'] as const;
 export type NormalSuit = (typeof NORMAL_SUITS)[number];
+export type TrumpSuit = NormalSuit | 'no-trump';
 export type Suit = NormalSuit | 'joker';
 
 export const SUIT_LABEL: Record<NormalSuit, string> = {
@@ -80,17 +81,18 @@ export function baseCardKey(card: Card): string {
   return `${card.suit}:${card.rank}`;
 }
 
-export function effectiveSuit(card: Card, trumpSuit: NormalSuit, levelRank: NormalRank): EffectiveSuit {
+export function effectiveSuit(card: Card, trumpSuit: TrumpSuit, levelRank: NormalRank): EffectiveSuit {
   if (card.suit === 'joker') return 'trump';
-  if (card.suit === trumpSuit) return 'trump';
+  if (trumpSuit !== 'no-trump' && card.suit === trumpSuit) return 'trump';
   if (card.rank === levelRank) return 'trump';
   return card.suit;
 }
 
-export function effectiveRankValue(card: Card, trumpSuit: NormalSuit, levelRank: NormalRank): number {
+export function effectiveRankValue(card: Card, trumpSuit: TrumpSuit, levelRank: NormalRank): number {
   if (card.rank === 'BJ') return 220;
   if (card.rank === 'SJ') return 210;
   if (card.suit === 'joker') return 200;
+  if (trumpSuit === 'no-trump' && card.rank === levelRank) return 180;
   if (card.rank === levelRank && card.suit === trumpSuit) return 190;
   if (card.rank === levelRank) return 180 + COUNTER_SUIT_ORDER.indexOf(card.suit);
   return NORMAL_RANK_VALUE.get(card.rank) ?? 0;
@@ -103,7 +105,7 @@ export function logicalRankValue(card: Card, levelRank: NormalRank): number {
   return NORMAL_RANK_VALUE.get(card.rank as NormalRank) ?? 0;
 }
 
-export function sortCards(cards: Card[], trumpSuit: NormalSuit, levelRank: NormalRank): Card[] {
+export function sortCards(cards: Card[], trumpSuit: TrumpSuit, levelRank: NormalRank): Card[] {
   return [...cards].sort((a, b) => {
     const suitA = effectiveSuit(a, trumpSuit, levelRank);
     const suitB = effectiveSuit(b, trumpSuit, levelRank);

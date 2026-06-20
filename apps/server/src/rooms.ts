@@ -184,8 +184,12 @@ function sanitizeIntent(room: GameState, user: UserRecord, intent: GameIntent): 
   if (clean.type === 'leave-seat') {
     return { ...clean, userId: user.id };
   }
+  if (clean.type === 'toggle-bot') {
+    authorizeSeatControl(room, user, clean.seat);
+    return clean;
+  }
   if ('seat' in clean) {
-    authorizeSeat(room, user, clean.seat);
+    authorizePlayerSeat(room, user, clean.seat);
   }
   return clean;
 }
@@ -199,9 +203,15 @@ function stripClientStrategy(intent: GameIntent): GameIntent {
   return intent;
 }
 
-function authorizeSeat(room: GameState, user: UserRecord, seat: SeatIndex) {
+function authorizeSeatControl(room: GameState, user: UserRecord, seat: SeatIndex) {
   const player = room.seats[seat];
   if (player.userId && player.userId !== user.id) throw new Error('不能操作其他真人座位');
+}
+
+function authorizePlayerSeat(room: GameState, user: UserRecord, seat: SeatIndex) {
+  const player = room.seats[seat];
+  if (player.isBot) throw new Error('AI座位由系统接管');
+  if (player.userId !== user.id) throw new Error('只能操作自己的座位');
 }
 
 function summaryRoom(room: GameState) {

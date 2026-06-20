@@ -1,4 +1,4 @@
-import type { Card, NormalRank, NormalSuit } from './cards.js';
+import type { Card, JokerRank, NormalRank, NormalSuit, TrumpSuit } from './cards.js';
 
 export type SeatIndex = 0 | 1 | 2 | 3 | 4 | 5 | 6;
 export const SEATS: SeatIndex[] = [0, 1, 2, 3, 4, 5, 6];
@@ -21,10 +21,11 @@ export type PlayerState = {
 
 export type TrumpBid = {
   seat: SeatIndex;
-  suit: NormalSuit;
+  suit: TrumpSuit;
   levelRank: NormalRank;
   levelCardCount: number;
   jokerCount: number;
+  noTrumpRank?: JokerRank;
   cardIds: string[];
   cards: Card[];
   action: 'bid' | 'counter' | 'kitty';
@@ -90,7 +91,7 @@ export type RoundResult = {
   mandatoryBottomPenalty: {
     rank: 'J' | 'A';
     kind: 'main' | 'off';
-    target: NormalRank;
+    target: NormalRank | null;
     affected: {
       seat: SeatIndex;
       from: NormalRank;
@@ -120,6 +121,7 @@ export type StrategyRisk = {
     | 'bury-control-card'
     | 'bury-structure'
     | 'break-structure'
+    | 'lead-trump-risk'
     | 'single-card-thinking'
     | 'self-friend'
     | 'unknown-team';
@@ -160,7 +162,7 @@ export type GameState = {
   dealerSeat: SeatIndex | null;
   nextDealerSeat: SeatIndex | null;
   dealerLevel: NormalRank;
-  trumpSuit: NormalSuit | null;
+  trumpSuit: TrumpSuit | null;
   kitty: Card[];
   bottomOwner: SeatIndex | null;
   currentBid: TrumpBid | null;

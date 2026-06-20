@@ -1,5 +1,6 @@
 export type Suit = 'spades' | 'hearts' | 'clubs' | 'diamonds' | 'joker';
 export type NormalSuit = Exclude<Suit, 'joker'>;
+export type TrumpSuit = NormalSuit | 'no-trump';
 export type Rank = '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' | '10' | 'J' | 'Q' | 'K' | 'A' | 'SJ' | 'BJ';
 
 export type Card = {
@@ -37,15 +38,16 @@ export type GameState = {
   dealerSeat: number | null;
   nextDealerSeat: number | null;
   dealerLevel: string;
-  trumpSuit: NormalSuit | null;
+  trumpSuit: TrumpSuit | null;
   kitty: Card[];
   bottomOwner: number | null;
   currentBid: null | {
     seat: number;
-    suit: NormalSuit;
+    suit: TrumpSuit;
     levelRank: string;
     levelCardCount: number;
     jokerCount: number;
+    noTrumpRank?: 'SJ' | 'BJ';
     cardIds: string[];
     cards: Card[];
     action: 'bid' | 'counter' | 'kitty';
@@ -73,7 +75,7 @@ export type GameState = {
     mandatoryBottomPenalty?: null | {
       rank: 'J' | 'A';
       kind: 'main' | 'off';
-      target: string;
+      target: string | null;
       affected: {
         seat: number;
         from: string;

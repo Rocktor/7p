@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Bot, Check, CirclePlay, DoorOpen, History, Hourglass, LogOut, Play, RotateCcw, Send, Shuffle, UserRound, X } from 'lucide-react';
 import { createRoom, getReplay, getRoom, listRooms, login, postIntent, register } from './api';
-import type { Card, GameState, NormalSuit, ReplayAnalysis, TrickState, User } from './types';
+import type { Card, GameState, NormalSuit, ReplayAnalysis, TrickState, TrumpSuit, User } from './types';
 import './styles.css';
 
 const SUIT_SYMBOL: Record<string, string> = {
@@ -18,6 +18,11 @@ const SUIT_NAME: Record<NormalSuit, string> = {
   hearts: '红桃',
   clubs: '梅花',
   diamonds: '方片'
+};
+
+const TRUMP_NAME: Record<TrumpSuit, string> = {
+  ...SUIT_NAME,
+  'no-trump': '无主'
 };
 
 type IntentSender = (intent: unknown) => Promise<void>;
@@ -281,11 +286,6 @@ function Table({
 
   async function toggleAiSeat(seat: GameState['seats'][number]) {
     if (!seatControlEnabled) return;
-    if (seat.isBot && mySeatIndex === null) {
-      await onIntent({ type: 'toggle-bot', seat: seat.seat, enabled: false });
-      await onIntent({ type: 'sit', seat: seat.seat });
-      return;
-    }
     await onIntent({ type: 'toggle-bot', seat: seat.seat, enabled: !seat.isBot });
   }
 
@@ -295,7 +295,7 @@ function Table({
         <span className="phase-chip">{phaseLabel(room.phase)}</span>
         <h2>{tableHeadline(room)}</h2>
         <p>第{room.round || 0}局 · 庄家 {seatName(room, room.dealerSeat)} · 打 {room.dealerLevel} · 闲家 {attackerScore(room)}分</p>
-        <p>主花色 {room.trumpSuit ? SUIT_NAME[room.trumpSuit] : '未定'} · {tableFocus(room)}</p>
+        <p>主花色 {room.trumpSuit ? TRUMP_NAME[room.trumpSuit] : '未定'} · {tableFocus(room)}</p>
         {room.phase === 'lobby' && emptySeatCount > 0 && (
           <button className="felt-action" onClick={onFillAiSeats}>
             <Bot size={16} /> 一键AI补齐 <span>{emptySeatCount}</span>
@@ -309,10 +309,14 @@ function Table({
         ) : visibleTrick && (
           <div className={`trick-layout ${visibleTrick.collecting ? 'collecting' : ''}`}>
             {visibleTrick.trick.plays.length === 0 ? <span className="muted-on-felt">等待 {seatName(room, room.activeSeat ?? visibleTrick.trick.leader)} 出牌</span> : visibleTrick.trick.plays.map((play) => (
-              <div className="trick-play" key={play.seat}>
+              <div
+                className="trick-play"
+                key={play.seat}
+                title={visibleTrick.trick.winner === play.seat ? '当前最大' : undefined}
+              >
                 <span>{seatName(room, play.seat)}</span>
                 <div className="mini-card-row">
-                  {play.cards.map((card) => <MiniCard card={card} key={card.id} />)}
+                  {play.cards.map((card) => <MiniCard card={card} highlighted={visibleTrick.trick.winner === play.seat} key={card.id} />)}
                 </div>
               </div>
             ))}
@@ -325,11 +329,15 @@ function Table({
           <span>{seatName(room, scoreBurst.winner)} 收下第 {scoreBurst.trickIndex} 墩</span>
         </div>
       )}
-      {room.seats.map((seat) => (
+      {room.seats.map((seat) => {
+        const isMySeat = seat.userId === user.id;
+        const canSit = seatControlEnabled && mySeatIndex === null && !seat.userId;
+        return (
         <div
           className={[
             'seat',
             `seat-${seat.seat}`,
+            isMySeat ? 'mine' : '',
             seat.seat === room.activeSeat ? 'active' : '',
             seat.seat === room.dealerSeat ? 'dealer' : '',
             hostTeam.has(seat.seat) ? 'host-team' : '',
@@ -346,10 +354,19 @@ function Table({
             <span>{seat.name}</span>
             <span className="seat-badges">
               {teamRole(room, seat.seat) && <em>{teamRole(room, seat.seat)}</em>}
+              {isMySeat && (
+                <button
+                  className="seat-avatar-toggle seat-leave-button"
+                  title="离席，AI接管"
+                  onClick={() => onIntent({ type: 'leave-seat', seat: seat.seat })}
+                >
+                  <LogOut size={14} />
+                </button>
+              )}
               {(seat.isBot || (!seat.userId && seatControlEnabled)) && (
                 <button
                   className={`seat-avatar-toggle ${seat.isBot ? 'bot-on' : ''}`}
-                  title={seat.isBot ? (mySeatIndex === null ? '接管AI座位' : '转为空座') : '切为AI'}
+                  title={seat.isBot ? '转为空座' : '切为AI'}
                   disabled={!seatControlEnabled}
                   onClick={() => toggleAiSeat(seat)}
                 >
@@ -364,10 +381,11 @@ function Table({
             <span>{seat.personalPoints}分</span>
           </div>
           <div className="seat-actions">
-            {!seat.userId && !seat.isBot && <button onClick={() => onIntent({ type: 'sit', seat: seat.seat })}>坐下</button>}
+            {canSit && <button onClick={() => onIntent({ type: 'sit', seat: seat.seat })}>坐下</button>}
           </div>
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -413,9 +431,9 @@ function Hand({
   );
 }
 
-function MiniCard({ card }: { card: Card }) {
+function MiniCard({ card, highlighted = false }: { card: Card; highlighted?: boolean }) {
   return (
-    <span className={`mini-card ${card.suit}`}>
+    <span className={`mini-card ${card.suit} ${highlighted ? 'winning' : ''}`}>
       <b>{cardRank(card)}</b>
       <i>{SUIT_SYMBOL[card.suit]}</i>
     </span>
@@ -426,7 +444,11 @@ function PublicBidShowcase({ room }: { room: GameState }) {
   const bid = room.currentBid!;
   const action = bid.action ?? (bid.source === 'kitty' ? 'kitty' : 'bid');
   const actionText = action === 'counter' ? '反底' : action === 'kitty' ? '翻底定主' : '亮主';
-  const cards = bid.cards?.length ? bid.cards : bid.cardIds.map((id) => ({ id, deck: 0, suit: bid.suit, rank: bid.levelRank } as Card));
+  const cards = bid.cards?.length ? bid.cards : bid.cardIds.map((id) => (
+    bid.suit === 'no-trump'
+      ? { id, deck: 0, suit: 'joker', rank: bid.noTrumpRank ?? 'SJ' }
+      : { id, deck: 0, suit: bid.suit, rank: bid.levelRank }
+  ) as Card);
 
   return (
     <section className={`public-bid-showcase ${action}`}>
@@ -444,12 +466,28 @@ function PublicBidShowcase({ room }: { room: GameState }) {
         ))}
       </div>
       <div className="public-bid-summary">
-        <span>{bid.jokerCount}张王</span>
-        <span>{bid.levelCardCount}张{SUIT_NAME[bid.suit]}{bid.levelRank}</span>
-        <span>当前主花色 {SUIT_NAME[bid.suit]}</span>
+        {bid.suit === 'no-trump' ? (
+          <>
+            <span>2猫</span>
+            <span>{bid.levelCardCount}张{jokerName(bid.noTrumpRank)}</span>
+            <span>当前主花色 无主</span>
+          </>
+        ) : (
+          <>
+            <span>{bid.jokerCount}张王</span>
+            <span>{bid.levelCardCount}张{SUIT_NAME[bid.suit]}{bid.levelRank}</span>
+            <span>当前主花色 {SUIT_NAME[bid.suit]}</span>
+          </>
+        )}
       </div>
     </section>
   );
+}
+
+function jokerName(rank: 'SJ' | 'BJ' | undefined) {
+  if (rank === 'SJ') return '小王';
+  if (rank === 'BJ') return '大王';
+  return '同类王';
 }
 
 function KittySettlement({ room }: { room: GameState }) {
@@ -508,7 +546,8 @@ function KittySettlement({ room }: { room: GameState }) {
 
 function mandatoryPenaltyText(room: GameState, penalty: NonNullable<NonNullable<GameState['result']>['mandatoryBottomPenalty']>) {
   const affected = penalty.affected.map((item) => `${seatName(room, item.seat)} ${item.from}→${item.to}`).join('、');
-  return affected ? `庄家队打回 ${penalty.target}：${affected}` : `庄家队打回 ${penalty.target}`;
+  const target = penalty.target ? `庄家队打回 ${penalty.target}` : '庄家队按个人级数打回';
+  return affected ? `${target}：${affected}` : target;
 }
 
 function digLabel(count: number) {
@@ -576,7 +615,7 @@ function ActionPanel({
           <button className="secondary" onClick={() => onIntent({ type: 'pass-counter', seat })}>
             {room.phase === 'bidding' ? '不亮' : '不反'}
           </button>
-          <small>请选择任意两张王 + 同花级牌。</small>
+          <small>两王+同花级牌，或2猫+n张同类王反无主。</small>
         </div>
       )}
       {room.phase === 'bury' && seat === room.bottomOwner && (

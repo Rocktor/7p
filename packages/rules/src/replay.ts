@@ -30,7 +30,7 @@ export function analyzeReplay(state: GameState): ReplayAnalysis {
 
   const result = state.result;
   const penaltyText = result?.mandatoryBottomPenalty
-    ? `，${result.mandatoryBottomPenalty.kind === 'main' ? '主' : '副'}${result.mandatoryBottomPenalty.rank}抠底，庄家队打回${result.mandatoryBottomPenalty.target}${formatMandatoryPenaltyAffected(state, result.mandatoryBottomPenalty)}`
+    ? `，${result.mandatoryBottomPenalty.kind === 'main' ? '主' : '副'}${result.mandatoryBottomPenalty.rank}抠底，庄家队${formatMandatoryPenaltyTarget(result.mandatoryBottomPenalty)}${formatMandatoryPenaltyAffected(state, result.mandatoryBottomPenalty)}`
     : '';
   const keyMoments = state.events
     .filter((event) => ['trump.bid', 'trump.counter', 'kitty.bury', 'friend.reveal', 'trick.complete', 'round.finish'].includes(event.type))
@@ -53,6 +53,12 @@ export function analyzeReplay(state: GameState): ReplayAnalysis {
     badDecisionTimeline: badDecisionLines(state),
     learningSummary: learningSummary(state)
   };
+}
+
+function formatMandatoryPenaltyTarget(
+  penalty: NonNullable<NonNullable<GameState['result']>['mandatoryBottomPenalty']>
+) {
+  return penalty.target ? `打回${penalty.target}` : '按个人级数打回';
 }
 
 function formatMandatoryPenaltyAffected(
