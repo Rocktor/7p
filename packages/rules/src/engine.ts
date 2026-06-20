@@ -384,6 +384,12 @@ function beatsBid(next: TrumpBid, current: TrumpBid | null): boolean {
   return trumpBidStrength(next) > trumpBidStrength(current);
 }
 
+export function canCounterBid(next: TrumpBid, current: TrumpBid | null): boolean {
+  if (!current) return true;
+  if (next.suit === current.suit) return false;
+  return beatsBid(next, current);
+}
+
 function makeBid(state: GameState, seat: SeatIndex, cardIds: string[]) {
   assertPhase(state, ['bidding', 'counter']);
   if (state.phase === 'bidding') {
@@ -400,7 +406,8 @@ function makeBid(state: GameState, seat: SeatIndex, cardIds: string[]) {
     ...parseTrumpBid(cards, seat, state.dealerLevel),
     action: isCounter ? 'counter' as const : 'bid' as const
   };
-  if (!beatsBid(bid, state.currentBid)) throw new Error('这手亮主/反底压不过当前主');
+  if (isCounter && state.currentBid && bid.suit === state.currentBid.suit) throw new Error('反底不能用同一主花色继续加张数压当前主');
+  if (isCounter ? !canCounterBid(bid, state.currentBid) : !beatsBid(bid, state.currentBid)) throw new Error('这手亮主/反底压不过当前主');
   state.currentBid = bid;
   state.trumpSuit = bid.suit;
   state.counterPasses = [];

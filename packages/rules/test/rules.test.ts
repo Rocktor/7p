@@ -319,6 +319,30 @@ describe('7人6副牌找朋友规则', () => {
     expect(state.seats[counterSeatTwo].hand).toHaveLength(seatTwoHandBefore + 9);
   });
 
+  it('反底不能用同一主花色加张数压当前主', () => {
+    let state = startSeeded('same-suit-counter');
+    const dealer = state.dealerSeat!;
+    const firstBid = manualBidCards('same-first', 'hearts', state.dealerLevel, 1);
+    state.seats[dealer].hand.push(...firstBid);
+    state = dispatch(state, { type: 'bid', seat: dealer, cardIds: firstBid.map((card) => card.id) }).state;
+
+    const dealerBury = state.seats[dealer].hand.filter((card) => card.rank !== 'A').slice(0, 9);
+    state = dispatch(state, { type: 'bury', seat: dealer, cardIds: dealerBury.map((card) => card.id) }).state;
+
+    const counterSeat = state.activeSeat!;
+    const sameSuitBid = manualBidCards('same-counter', 'hearts', state.dealerLevel, 2);
+    state.seats[counterSeat].hand = sameSuitBid;
+
+    expect(() => dispatch(state, {
+      type: 'bid',
+      seat: counterSeat,
+      cardIds: sameSuitBid.map((card) => card.id)
+    })).toThrow(/同一主花色/);
+
+    const intent = decideBotIntent(state, counterSeat);
+    expect(intent?.type).toBe('pass-counter');
+  });
+
   it('扣底阶段禁止扣任何A', () => {
     let state = startSeeded('bury-a');
     const dealer = state.dealerSeat!;

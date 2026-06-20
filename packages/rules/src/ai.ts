@@ -1,5 +1,5 @@
 import { NORMAL_SUITS, type Card } from './cards.js';
-import { parseTrumpBid, trumpBidStrength } from './engine.js';
+import { canCounterBid, parseTrumpBid, trumpBidStrength } from './engine.js';
 import { chooseUpgradePlay } from './play-policy.js';
 import { chooseFriendCallsForUpgrade, chooseUpgradeBury, reportSimpleDecision } from './strategy.js';
 import type { GameIntent, GameState, SeatIndex } from './types.js';
@@ -84,7 +84,9 @@ function findBid(state: GameState, seat: SeatIndex): string[] | null {
     .flatMap((cards) => {
       try {
         const parsed = parseTrumpBid(cards, seat, state.dealerLevel);
-        return trumpBidStrength(parsed) > currentStrength ? [{ cards, strength: trumpBidStrength(parsed) }] : [];
+        const strength = trumpBidStrength(parsed);
+        const canBid = state.phase === 'counter' ? canCounterBid(parsed, state.currentBid) : strength > currentStrength;
+        return canBid ? [{ cards, strength }] : [];
       } catch {
         return [];
       }

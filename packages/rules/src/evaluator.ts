@@ -1,6 +1,6 @@
 import { NORMAL_SUITS, type NormalSuit, pointValue, sortCards } from './cards.js';
 import { decideBotIntent } from './ai.js';
-import { createGame, dispatch, legalCardsForSimplePlay, parseTrumpBid, trumpBidStrength } from './engine.js';
+import { canCounterBid, createGame, dispatch, legalCardsForSimplePlay, parseTrumpBid, trumpBidStrength } from './engine.js';
 import type { GameIntent, GameState, RoundResult, SeatIndex, StrategyDecisionReport, StrategyRisk } from './types.js';
 
 export type BotStrategyName = 'upgrade' | 'point-only-baseline';
@@ -208,7 +208,10 @@ function findBaselineBid(state: GameState, seat: SeatIndex): string[] | null {
       const parsed = parseTrumpBid(cards, seat, state.dealerLevel);
       const current = state.currentBid;
       const currentStrength = current ? trumpBidStrength(current) : -1;
-      if (trumpBidStrength(parsed) > currentStrength) return cards.map((card) => card.id);
+      const canBid = state.phase === 'counter'
+        ? canCounterBid(parsed, current)
+        : trumpBidStrength(parsed) > currentStrength;
+      if (canBid) return cards.map((card) => card.id);
     } catch {
       return null;
     }
