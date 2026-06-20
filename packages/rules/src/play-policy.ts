@@ -405,25 +405,59 @@ function canCompeteWithLeadShape(candidate: PlayShape, lead: PlayShape): boolean
       candidate.tupleSize === lead.tupleSize &&
       candidate.tractorLength === lead.tractorLength;
   }
-  return lead.components.every((component) => {
-    const count = candidate.components
+  return shapeComponents(lead).every((component) => {
+    const count = shapeComponents(candidate)
       .filter((item) => item.tupleSize >= component.tupleSize)
       .reduce((sum, item) => sum + item.tractorLength, 0);
     return count >= component.tractorLength;
   });
 }
 
+function shapeComponents(shape: PlayShape): PlayShape['components'] {
+  if (Array.isArray(shape.components)) return shape.components;
+  if (shape.kind === 'tuple' && shape.tupleSize >= 2) {
+    return [{
+      tupleSize: shape.tupleSize,
+      tractorLength: 1,
+      count: shape.count,
+      strength: shape.strength,
+      label: `${shape.tupleSize}张`
+    }];
+  }
+  if (shape.kind === 'tractor' && shape.tupleSize >= 2 && shape.tractorLength >= 2) {
+    return [{
+      tupleSize: shape.tupleSize,
+      tractorLength: shape.tractorLength,
+      count: shape.count,
+      strength: shape.strength,
+      label: `${shape.tractorLength}连${shape.tupleSize}张`
+    }];
+  }
+  return [];
+}
+
 function lowPointFollowAlternative(state: GameState, seat: SeatIndex, memory: TableMemory): Card[] | null {
   const trick = state.currentTrick;
-  if (!trick?.leadShape || trick.leadShape.count !== 1) return null;
+  if (!trick?.leadShape) return null;
   const hand = state.seats[seat].hand;
   const leadDoor = trick.leadShape.effectiveSuit;
   if (leadDoor !== 'mixed') {
     const matching = hand.filter((card) => effectiveSuit(card, memory.trumpSuit, memory.levelRank) === leadDoor);
+    if (matching.length > 0 && matching.length < trick.leadShape.count) {
+      const rest = lowRiskFillCards(withoutCards(hand, matching), trick.leadShape.count - matching.length, memory);
+      const selected = [...matching, ...rest];
+      return selected.length === trick.leadShape.count && sumPoints(selected) < sumPoints(legalCardsForSimplePlay(state, seat)) ? selected : null;
+    }
+    if (trick.leadShape.count !== 1) return null;
     if (matching.length > 0) {
       const zeroPoint = lowestPointCards(matching.filter((card) => pointValue(card) === 0), memory);
       return zeroPoint.length > 0 ? [zeroPoint[0]] : null;
     }
+  }
+
+  if (trick.leadShape.count > 1) {
+    const selected = lowRiskFillCards(hand, trick.leadShape.count, memory);
+    return selected.length === trick.leadShape.count && sumPoints(selected) < sumPoints(legalCardsForSimplePlay(state, seat)) ? selected : null;
   }
 
   const zeroPoint = hand.filter((card) => pointValue(card) === 0);
@@ -431,6 +465,31 @@ function lowPointFollowAlternative(state: GameState, seat: SeatIndex, memory: Ta
   const pool = nonTrump.length > 0 ? nonTrump : zeroPoint;
   const lowest = lowestPointCards(pool, memory);
   return lowest.length > 0 ? [lowest[0]] : null;
+}
+
+function lowRiskFillCards(cards: Card[], count: number, memory: TableMemory): Card[] {
+  const selected: Card[] = [];
+  let remaining = [...cards];
+  const tiers: ((card: Card) => boolean)[] = [
+    (card) => pointValue(card) === 0 && !isPremiumControlCard(card, memory) && effectiveSuit(card, memory.trumpSuit, memory.levelRank) !== 'trump' && !breaksLogicalGroup(card, remaining, memory),
+    (card) => pointValue(card) === 0 && !isPremiumControlCard(card, memory) && !breaksLogicalGroup(card, remaining, memory),
+    (card) => pointValue(card) === 0 && !isPremiumControlCard(card, memory),
+    (card) => pointValue(card) === 0,
+    (card) => !isPremiumControlCard(card, memory) && !breaksLogicalGroup(card, remaining, memory),
+    (card) => !isPremiumControlCard(card, memory),
+    () => true
+  ];
+
+  for (const tier of tiers) {
+    const pool = lowestPointCards(remaining.filter(tier), memory);
+    while (pool.length > 0 && selected.length < count) {
+      const card = pool.shift()!;
+      selected.push(card);
+      remaining = withoutCards(remaining, [card]);
+    }
+    if (selected.length === count) return selected;
+  }
+  return selected;
 }
 
 function unsafePointLeadRisk(state: GameState, seat: SeatIndex, memory: TableMemory, fallback: Card[]): StrategyRisk | null {

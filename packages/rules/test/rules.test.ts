@@ -537,6 +537,37 @@ describe('7人6副牌找朋友规则', () => {
     expect(() => dispatch(state, { type: 'play', seat: 1, cardIds: chosen.map((card) => card.id) })).not.toThrow();
   });
 
+  it('兼容旧存档里没有components字段的leadShape', () => {
+    const state = createGame('legacy-lead-shape');
+    state.phase = 'playing';
+    state.trumpSuit = 'spades';
+    state.dealerLevel = 'J';
+    state.activeSeat = 1;
+    const lead = [
+      { id: 'h8-0', deck: 0, suit: 'hearts', rank: '8' },
+      { id: 'h8-1', deck: 1, suit: 'hearts', rank: '8' }
+    ] as Card[];
+    const shape = classifyPlay(lead, 'spades', 'J');
+    const { components: _components, ...legacyShape } = shape;
+    state.currentTrick = {
+      index: 1,
+      leader: 0,
+      plays: [{ seat: 0, cards: lead }],
+      leadShape: legacyShape as never,
+      winner: null,
+      points: 0
+    };
+    state.seats[1].hand = [
+      { id: 'h7-0', deck: 0, suit: 'hearts', rank: '7' },
+      { id: 'h7-1', deck: 1, suit: 'hearts', rank: '7' }
+    ] as Card[];
+
+    const chosen = legalCardsForSimplePlay(state, 1);
+
+    expect(chosen.map((card) => card.id)).toEqual(['h7-0', 'h7-1']);
+    expect(() => dispatch(state, { type: 'play', seat: 1, cardIds: chosen.map((card) => card.id) })).not.toThrow();
+  });
+
   it('2♦3♦4♦5♦不能当顺子/拖拉机，甩牌失败时强制只出最小一手', () => {
     const state = createGame('bad-toss');
     state.phase = 'playing';
@@ -1212,6 +1243,58 @@ describe('7人6副牌找朋友规则', () => {
     expect(intent?.type).toBe('play');
     if (intent?.type !== 'play') return;
     expect(intent.cardIds).toEqual(['ai7-d2']);
+    expect(intent.strategy?.candidates?.some((candidate) => candidate.id === 'point-safe-follow')).toBe(true);
+  });
+
+  it('同门不够跟多张时，AI补牌优先垫0分而不是按低点数塞10分', () => {
+    const state = createGame('avoid-points-when-short-following-combo');
+    state.phase = 'playing';
+    state.dealerSeat = 1;
+    state.trumpSuit = 'spades';
+    state.dealerLevel = '7';
+    state.activeSeat = 1;
+    state.friendCalls = [{
+      id: 'friend-rocktor',
+      suit: 'hearts',
+      nth: 1,
+      seen: 1,
+      matchedBy: 0,
+      matchedTrick: 1,
+      pointsAtReveal: 0
+    } satisfies FriendCall];
+    const lead = [
+      { id: 'lead-d2', deck: 0, suit: 'diamonds', rank: '2' },
+      { id: 'lead-d3', deck: 0, suit: 'diamonds', rank: '3' },
+      { id: 'lead-d4', deck: 0, suit: 'diamonds', rank: '4' },
+      { id: 'lead-d5', deck: 0, suit: 'diamonds', rank: '5' }
+    ] as Card[];
+    state.currentTrick = {
+      index: 23,
+      leader: 0,
+      plays: [{ seat: 0, cards: lead }],
+      leadShape: classifyPlay(lead, 'spades', '7'),
+      winner: 0,
+      points: 5
+    };
+    state.seats[1].isBot = true;
+    state.seats[1].hand = [
+      { id: 'short-dA', deck: 3, suit: 'diamonds', rank: 'A' },
+      { id: 'short-h10-1', deck: 5, suit: 'hearts', rank: '10' },
+      { id: 'short-h10-2', deck: 4, suit: 'hearts', rank: '10' },
+      { id: 'short-hJ', deck: 0, suit: 'hearts', rank: 'J' },
+      { id: 'short-hA', deck: 3, suit: 'hearts', rank: 'A' },
+      { id: 'short-sQ', deck: 2, suit: 'spades', rank: 'Q' }
+    ] as Card[];
+
+    const intent = decideBotIntent(state, 1);
+
+    expect(intent?.type).toBe('play');
+    if (intent?.type !== 'play') return;
+    expect(intent.cardIds).toContain('short-dA');
+    expect(intent.cardIds).not.toContain('short-h10-1');
+    expect(intent.cardIds).not.toContain('short-h10-2');
+    const selected = state.seats[1].hand.filter((card) => intent.cardIds.includes(card.id));
+    expect(sumPoints(selected)).toBe(0);
     expect(intent.strategy?.candidates?.some((candidate) => candidate.id === 'point-safe-follow')).toBe(true);
   });
 

@@ -770,6 +770,29 @@ function comboLabel(components: PlayComponent[]): string {
   return `甩牌(${components.map((component) => component.label).join('+')})`;
 }
 
+function shapeComponents(shape: PlayShape): PlayComponent[] {
+  if (Array.isArray(shape.components)) return shape.components;
+  if (shape.kind === 'tuple' && shape.tupleSize >= 2) {
+    return [{
+      tupleSize: shape.tupleSize,
+      tractorLength: 1,
+      count: shape.count,
+      strength: shape.strength,
+      label: `${shape.tupleSize}张`
+    }];
+  }
+  if (shape.kind === 'tractor' && shape.tupleSize >= 2 && shape.tractorLength >= 2) {
+    return [{
+      tupleSize: shape.tupleSize,
+      tractorLength: shape.tractorLength,
+      count: shape.count,
+      strength: shape.strength,
+      label: `${shape.tractorLength}连${shape.tupleSize}张`
+    }];
+  }
+  return [];
+}
+
 function isConsecutiveGroups(groups: Card[][], trumpSuit: TrumpSuit, levelRank: NormalRank): boolean {
   for (let i = 1; i < groups.length; i += 1) {
     const prev = tractorRankValue(groups[i - 1][0], trumpSuit, levelRank);
@@ -832,7 +855,7 @@ function followRequirements(
 ): FollowRequirement[] {
   const requirements: FollowRequirement[] = [];
   const groups = availableGroupEntries(cards, trumpSuit, levelRank);
-  const components = [...leadShape.components].sort((a, b) => {
+  const components = [...shapeComponents(leadShape)].sort((a, b) => {
     if (b.tupleSize !== a.tupleSize) return b.tupleSize - a.tupleSize;
     return b.tractorLength - a.tractorLength;
   });
@@ -1010,7 +1033,7 @@ function canCompeteWithLead(candidate: PlayShape, lead: PlayShape): boolean {
       candidate.tupleSize === lead.tupleSize &&
       candidate.tractorLength === lead.tractorLength;
   }
-  return coversComponents(candidate.components, lead.components);
+  return coversComponents(shapeComponents(candidate), shapeComponents(lead));
 }
 
 function coversComponents(candidate: PlayComponent[], lead: PlayComponent[]): boolean {
@@ -1296,7 +1319,7 @@ function fillCardsForLeadShape(
   levelRank: NormalRank,
   preferHigh: boolean
 ): Card[] {
-  const maxRequiredTuple = Math.max(lead.tupleSize, ...lead.components.map((component) => component.tupleSize));
+  const maxRequiredTuple = Math.max(lead.tupleSize, ...shapeComponents(lead).map((component) => component.tupleSize));
   const unprotected = groupByLogicalCard(pool, trumpSuit, levelRank)
     .filter((group) => group.length <= maxRequiredTuple)
     .flat();
