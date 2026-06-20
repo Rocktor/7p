@@ -4,10 +4,11 @@ import {
   type EffectiveSuit,
   type NormalRank,
   type TrumpSuit,
-  baseCardKey,
   cardLabel,
+  compareLogicalCards,
   effectiveRankValue,
   effectiveSuit,
+  logicalCardKey,
   pointValue,
   sortCards
 } from './cards.js';
@@ -217,10 +218,10 @@ function cardsDoor(cards: Card[], trumpSuit: TrumpSuit, levelRank: NormalRank): 
 function groupByLogicalCard(cards: Card[], trumpSuit: TrumpSuit, levelRank: NormalRank): Card[][] {
   const grouped = new Map<string, Card[]>();
   for (const card of cards) {
-    const key = `${effectiveSuit(card, trumpSuit, levelRank)}:${baseCardKey(card)}`;
+    const key = logicalCardKey(card, trumpSuit, levelRank);
     grouped.set(key, [...(grouped.get(key) ?? []), card]);
   }
-  return [...grouped.values()].sort((a, b) => effectiveRankValue(a[0], trumpSuit, levelRank) - effectiveRankValue(b[0], trumpSuit, levelRank));
+  return [...grouped.values()].sort((a, b) => compareLogicalCards(a[0], b[0], trumpSuit, levelRank));
 }
 
 function sumPoints(cards: Card[]): number {

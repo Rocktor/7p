@@ -48,6 +48,7 @@ describe('RoomManager', () => {
     const room = manager.createRoom('test room');
     const state = manager.getRoom(room.id);
     state.phase = 'bidding';
+    state.activeSeat = 0;
     state.seats[0].userId = user.id;
     state.seats[0].name = user.name;
 

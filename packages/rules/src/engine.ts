@@ -8,18 +8,19 @@ import {
   NORMAL_SUITS,
   type NormalSuit,
   type TrumpSuit,
-  baseCardKey,
   cardLabel,
+  compareLogicalCards,
   createDecks,
   effectiveRankValue,
   effectiveSuit,
   isAce,
   isJoker,
-  logicalRankValue,
+  logicalCardKey,
   pointValue,
   rankUpOne,
   shuffle,
-  sortCards
+  sortCards,
+  tractorRankValue
 } from './cards.js';
 import { analyzeBurySelection, strategyDecisionMessage, summarizeHandStructure } from './strategy.js';
 import {
@@ -72,10 +73,12 @@ export function createGame(id: string, name = '找朋友牌桌'): GameState {
     dealerLevel: '7',
     trumpSuit: null,
     kitty: [],
+    pickedKittyCardIds: [],
     bottomOwner: null,
     currentBid: null,
     bidPasses: [],
     counterPasses: [],
+    counterEligibleSeats: [],
     friendCalls: [],
     aceSeen: { spades: 0, hearts: 0, clubs: 0, diamonds: 0 },
     activeSeat: null,
@@ -251,10 +254,12 @@ function beginRound(state: GameState, dealerSeat: SeatIndex, seed: string) {
   state.dealerLevel = dealer.level;
   state.trumpSuit = null;
   state.kitty = deck.slice(0, KITTY_SIZE);
+  state.pickedKittyCardIds = [];
   state.bottomOwner = null;
   state.currentBid = null;
   state.bidPasses = [];
   state.counterPasses = [];
+  state.counterEligibleSeats = [...SEATS];
   state.friendCalls = [];
   state.aceSeen = { spades: 0, hearts: 0, clubs: 0, diamonds: 0 };
   state.activeSeat = dealerSeat;
@@ -376,6 +381,13 @@ function beatsBid(next: TrumpBid, current: TrumpBid | null): boolean {
 
 function makeBid(state: GameState, seat: SeatIndex, cardIds: string[]) {
   assertPhase(state, ['bidding', 'counter']);
+  if (state.phase === 'bidding') {
+    if (state.activeSeat !== seat) throw new Error('还没轮到这个座位亮主');
+  } else {
+    ensureCounterEligibleSeats(state);
+    if (!state.counterEligibleSeats.includes(seat)) throw new Error('这个座位已经不在反底行列');
+    if (state.activeSeat !== seat) throw new Error('还没轮到这个座位反底');
+  }
   const p = player(state, seat);
   const cards = getCardsByIds(p.hand, cardIds);
   const isCounter = state.phase === 'counter';
@@ -386,14 +398,15 @@ function makeBid(state: GameState, seat: SeatIndex, cardIds: string[]) {
   if (!beatsBid(bid, state.currentBid)) throw new Error('这手亮主/反底压不过当前主');
   state.currentBid = bid;
   state.trumpSuit = bid.suit;
-  state.bidPasses = [];
   state.counterPasses = [];
   if (isCounter) {
+    state.pickedKittyCardIds = state.kitty.map((card) => card.id);
     p.hand.push(...state.kitty);
     p.hand = sortCards(p.hand, bid.suit, state.dealerLevel);
     state.kitty = [];
     state.bottomOwner = seat;
     state.phase = 'bury';
+    state.activeSeat = seat;
     addEvent(state, 'trump.counter', `${p.name} 反底为 ${bidText(bid)}`, bid);
   } else {
     addEvent(state, 'trump.bid', `${p.name} 亮主为 ${bidText(bid)}`, bid);
@@ -403,11 +416,63 @@ function makeBid(state: GameState, seat: SeatIndex, cardIds: string[]) {
 
 function passCounter(state: GameState, seat: SeatIndex) {
   assertPhase(state, ['bidding', 'counter']);
+  if (state.phase === 'bidding') {
+    ensureCounterEligibleSeats(state);
+    if (state.activeSeat !== seat) throw new Error('还没轮到这个座位亮主');
+    removeCounterEligibility(state, seat);
+  } else {
+    ensureCounterEligibleSeats(state);
+    if (!state.counterEligibleSeats.includes(seat)) throw new Error('这个座位已经不在反底行列');
+    if (state.activeSeat !== seat) throw new Error('还没轮到这个座位反底');
+  }
   const target = state.phase === 'bidding' ? state.bidPasses : state.counterPasses;
   if (!target.includes(seat)) target.push(seat);
   addEvent(state, 'player.pass', `${player(state, seat).name} 选择${state.phase === 'bidding' ? '不亮' : '不反'}`, { seat, phase: state.phase });
-  if (state.phase === 'bidding' && state.bidPasses.length === PLAYER_COUNT) beginBury(state);
-  if (state.phase === 'counter' && state.counterPasses.length >= PLAYER_COUNT) enterFriendCall(state);
+  if (state.phase === 'bidding') {
+    const next = nextBiddingSeat(state, seat);
+    if (next === null) beginBury(state);
+    else state.activeSeat = next;
+    return;
+  }
+  advanceCounterTurn(state, seat);
+}
+
+function ensureCounterEligibleSeats(state: GameState) {
+  state.counterEligibleSeats ??= [...SEATS];
+}
+
+function removeCounterEligibility(state: GameState, seat: SeatIndex) {
+  ensureCounterEligibleSeats(state);
+  state.counterEligibleSeats = state.counterEligibleSeats.filter((item) => item !== seat);
+}
+
+function nextBiddingSeat(state: GameState, fromSeat: SeatIndex): SeatIndex | null {
+  for (let offset = 1; offset <= PLAYER_COUNT; offset += 1) {
+    const seat = ((fromSeat + offset) % PLAYER_COUNT) as SeatIndex;
+    if (!state.bidPasses.includes(seat)) return seat;
+  }
+  return null;
+}
+
+function advanceCounterTurn(state: GameState, fromSeat: SeatIndex) {
+  const next = nextCounterSeat(state, fromSeat);
+  if (next === null) {
+    enterFriendCall(state);
+    return;
+  }
+  state.activeSeat = next;
+}
+
+function nextCounterSeat(state: GameState, fromSeat: SeatIndex): SeatIndex | null {
+  ensureCounterEligibleSeats(state);
+  for (let offset = 1; offset <= PLAYER_COUNT; offset += 1) {
+    const seat = ((fromSeat + offset) % PLAYER_COUNT) as SeatIndex;
+    if (seat === state.bottomOwner) continue;
+    if (!state.counterEligibleSeats.includes(seat)) continue;
+    if (state.counterPasses.includes(seat)) continue;
+    return seat;
+  }
+  return null;
 }
 
 function beginBury(state: GameState) {
@@ -420,11 +485,13 @@ function beginBury(state: GameState) {
     addEvent(state, 'trump.kitty', `无人亮主，翻底定主为 ${TRUMP_SUIT_NAME[kittyBid.suit]} ${state.dealerLevel}`, kittyBid);
   }
   const dealer = player(state, dealerSeat);
+  state.pickedKittyCardIds = state.kitty.map((card) => card.id);
   dealer.hand.push(...state.kitty);
   dealer.hand = sortCards(dealer.hand, state.currentBid.suit, state.dealerLevel);
   state.kitty = [];
   state.bottomOwner = dealerSeat;
   state.phase = 'bury';
+  state.activeSeat = dealerSeat;
   addEvent(state, 'kitty.pickup', `${dealer.name} 拿起9张底牌`, { seat: dealerSeat });
 }
 
@@ -470,8 +537,10 @@ function buryKitty(state: GameState, seat: SeatIndex, cardIds: string[]) {
   const aiSample = p.isBot ? analyzeBurySelection(state, seat, cards) : null;
   p.hand = removeCards(p.hand, cards.map((card) => card.id));
   state.kitty = cards;
+  state.pickedKittyCardIds = [];
   state.phase = 'counter';
   state.counterPasses = [seat];
+  state.activeSeat = seat;
   addEvent(state, 'kitty.bury', `${p.name} 扣回9张底牌，等待反底`, {
     seat,
     points: sumPoints(cards),
@@ -485,6 +554,7 @@ function buryKitty(state: GameState, seat: SeatIndex, cardIds: string[]) {
       analysis: aiSample
     } : {})
   });
+  advanceCounterTurn(state, seat);
 }
 
 function finishCounter(state: GameState, seat: SeatIndex) {
@@ -626,8 +696,8 @@ export function classifyPlay(cards: Card[], trumpSuit: TrumpSuit, levelRank: Nor
   const playSuit = suits.size === 1 ? ([...suits][0] as EffectiveSuit) : 'mixed';
   const orderedGroups = groupByLogicalCard(cards, trumpSuit, levelRank);
   const groupSizes = new Set(orderedGroups.map((group) => group.length));
-  const maxStrength = Math.max(...cards.map((card) => effectiveRankValue(card, trumpSuit, levelRank)));
-  const components = playSuit === 'mixed' ? [] : playComponents(orderedGroups, levelRank);
+  const maxStrength = Math.max(...cards.map((card) => tractorRankValue(card, trumpSuit, levelRank)));
+  const components = playSuit === 'mixed' ? [] : playComponents(orderedGroups, trumpSuit, levelRank);
 
   if (cards.length === 1) {
     return { kind: 'single', count: 1, effectiveSuit: playSuit, tupleSize: 1, tractorLength: 1, strength: maxStrength, label: '单张', components };
@@ -638,7 +708,7 @@ export function classifyPlay(cards: Card[], trumpSuit: TrumpSuit, levelRank: Nor
   }
   if (playSuit !== 'mixed' && groupSizes.size === 1) {
     const tupleSize = orderedGroups[0].length;
-    if (tupleSize >= 2 && isConsecutiveGroups(orderedGroups, levelRank)) {
+    if (tupleSize >= 2 && isConsecutiveGroups(orderedGroups, trumpSuit, levelRank)) {
       return {
         kind: 'tractor',
         count: cards.length,
@@ -657,25 +727,25 @@ export function classifyPlay(cards: Card[], trumpSuit: TrumpSuit, levelRank: Nor
 function groupByLogicalCard(cards: Card[], trumpSuit: TrumpSuit, levelRank: NormalRank): Card[][] {
   const groups = new Map<string, Card[]>();
   for (const card of cards) {
-    const key = `${effectiveSuit(card, trumpSuit, levelRank)}:${baseCardKey(card)}`;
+    const key = logicalCardKey(card, trumpSuit, levelRank);
     groups.set(key, [...(groups.get(key) ?? []), card]);
   }
   return [...groups.values()].sort((a, b) => {
-    return logicalRankValue(a[0], levelRank) - logicalRankValue(b[0], levelRank);
+    return compareLogicalCards(a[0], b[0], trumpSuit, levelRank);
   });
 }
 
-function playComponents(groups: Card[][], levelRank: NormalRank): PlayComponent[] {
+function playComponents(groups: Card[][], trumpSuit: TrumpSuit, levelRank: NormalRank): PlayComponent[] {
   const pairOrBetter = groups.filter((group) => group.length >= 2);
   if (pairOrBetter.length === 0) return [];
   const sameSize = new Set(pairOrBetter.map((group) => group.length)).size === 1;
-  if (sameSize && pairOrBetter.length >= 2 && isConsecutiveGroups(pairOrBetter, levelRank)) {
+  if (sameSize && pairOrBetter.length >= 2 && isConsecutiveGroups(pairOrBetter, trumpSuit, levelRank)) {
     const tupleSize = pairOrBetter[0].length;
     return [{
       tupleSize,
       tractorLength: pairOrBetter.length,
       count: tupleSize * pairOrBetter.length,
-      strength: Math.max(...pairOrBetter.map((group) => logicalRankValue(group[0], levelRank))),
+      strength: Math.max(...pairOrBetter.map((group) => tractorRankValue(group[0], trumpSuit, levelRank))),
       label: `${pairOrBetter.length}连${tupleSize}张`
     }];
   }
@@ -683,7 +753,7 @@ function playComponents(groups: Card[][], levelRank: NormalRank): PlayComponent[
     tupleSize: group.length,
     tractorLength: 1,
     count: group.length,
-    strength: logicalRankValue(group[0], levelRank),
+    strength: tractorRankValue(group[0], trumpSuit, levelRank),
     label: `${group.length}张`
   }));
 }
@@ -695,10 +765,10 @@ function comboLabel(components: PlayComponent[]): string {
   return `甩牌(${components.map((component) => component.label).join('+')})`;
 }
 
-function isConsecutiveGroups(groups: Card[][], levelRank: NormalRank): boolean {
+function isConsecutiveGroups(groups: Card[][], trumpSuit: TrumpSuit, levelRank: NormalRank): boolean {
   for (let i = 1; i < groups.length; i += 1) {
-    const prev = logicalRankValue(groups[i - 1][0], levelRank);
-    const current = logicalRankValue(groups[i][0], levelRank);
+    const prev = tractorRankValue(groups[i - 1][0], trumpSuit, levelRank);
+    const current = tractorRankValue(groups[i][0], trumpSuit, levelRank);
     if (current !== prev + 1) return false;
   }
   return true;
@@ -737,11 +807,11 @@ function validateFollowStructure(
   const selectedGroups = availableGroupEntries(matchingSelected, trumpSuit, levelRank);
   for (const requirement of requirements) {
     if (requirement.kind === 'tractor') {
-      const cards = consumeTractor(selectedGroups, requirement.tupleSize, requirement.tractorLength, levelRank, false, true);
+      const cards = consumeTractor(selectedGroups, requirement.tupleSize, requirement.tractorLength, trumpSuit, levelRank, false, true);
       if (!cards) throw new Error(`有${formatTractorName(requirement.tupleSize, requirement.tractorLength)}必须跟${formatTractorName(requirement.tupleSize, requirement.tractorLength)}`);
       continue;
     }
-    const cards = consumeTupleGroups(selectedGroups, requirement.tupleSize, requirement.groups, levelRank, false, true);
+    const cards = consumeTupleGroups(selectedGroups, requirement.tupleSize, requirement.groups, trumpSuit, levelRank, false, true);
     if (cards.length !== requirement.tupleSize * requirement.groups) {
       if (requirement.tupleSize >= 3) throw new Error(`有${requirement.tupleSize}张必须跟${requirement.tupleSize}张`);
       throw new Error('有对必须跟对');
@@ -767,7 +837,7 @@ function followRequirements(
     let remainingCards = component.count;
 
     if (component.tractorLength >= 2) {
-      const tractor = consumeTractor(groups, component.tupleSize, component.tractorLength, levelRank, false, true);
+      const tractor = consumeTractor(groups, component.tupleSize, component.tractorLength, trumpSuit, levelRank, false, true);
       if (tractor) {
         requirements.push({
           kind: 'tractor',
@@ -781,7 +851,7 @@ function followRequirements(
     for (let arity = component.tupleSize; arity >= 2; arity -= 1) {
       const groupsNeeded = Math.floor(remainingCards / arity);
       if (groupsNeeded <= 0) continue;
-      const taken = consumeTupleGroups(groups, arity, groupsNeeded, levelRank, false, true);
+      const taken = consumeTupleGroups(groups, arity, groupsNeeded, trumpSuit, levelRank, false, true);
       const takenGroups = Math.floor(taken.length / arity);
       if (takenGroups <= 0) continue;
       requirements.push({ kind: 'tuple', tupleSize: arity, groups: takenGroups });
@@ -803,6 +873,7 @@ function consumeTractor(
   entries: CardGroupEntry[],
   tupleSize: number,
   tractorLength: number,
+  trumpSuit: TrumpSuit,
   levelRank: NormalRank,
   preferHigh: boolean,
   exactSize = false
@@ -811,12 +882,12 @@ function consumeTractor(
   const runs: CardGroupEntry[][] = [];
   for (let start = 0; start <= groups.length - tractorLength; start += 1) {
     const run = groups.slice(start, start + tractorLength);
-    if (isConsecutiveGroups(run.map((entry) => entry.group), levelRank)) runs.push(run);
+    if (isConsecutiveGroups(run.map((entry) => entry.group), trumpSuit, levelRank)) runs.push(run);
   }
   if (runs.length === 0) return null;
   runs.sort((a, b) => {
-    const aStrength = logicalRankValue(a.at(-1)!.group[0], levelRank);
-    const bStrength = logicalRankValue(b.at(-1)!.group[0], levelRank);
+    const aStrength = tractorRankValue(a.at(-1)!.group[0], trumpSuit, levelRank);
+    const bStrength = tractorRankValue(b.at(-1)!.group[0], trumpSuit, levelRank);
     return preferHigh ? bStrength - aStrength : aStrength - bStrength;
   });
   return runs[0].flatMap((entry) => entry.remaining.splice(0, tupleSize));
@@ -826,6 +897,7 @@ function consumeTupleGroups(
   entries: CardGroupEntry[],
   tupleSize: number,
   groupsNeeded: number,
+  trumpSuit: TrumpSuit,
   levelRank: NormalRank,
   preferHigh: boolean,
   exactSize = false
@@ -833,8 +905,8 @@ function consumeTupleGroups(
   const groups = entries
     .filter((entry) => exactSize ? entry.remaining.length === tupleSize : entry.remaining.length >= tupleSize)
     .sort((a, b) => preferHigh
-      ? logicalRankValue(b.group[0], levelRank) - logicalRankValue(a.group[0], levelRank)
-      : logicalRankValue(a.group[0], levelRank) - logicalRankValue(b.group[0], levelRank)
+      ? compareLogicalCards(b.group[0], a.group[0], trumpSuit, levelRank)
+      : compareLogicalCards(a.group[0], b.group[0], trumpSuit, levelRank)
     );
   const selected: Card[] = [];
   let remaining = groupsNeeded;
@@ -860,11 +932,11 @@ function selectRequiredFollowCards(
   const groups = availableGroupEntries(pool, trumpSuit, levelRank);
   for (const requirement of requirements) {
     if (requirement.kind === 'tractor') {
-      const tractor = consumeTractor(groups, requirement.tupleSize, requirement.tractorLength, levelRank, preferHigh, true);
+      const tractor = consumeTractor(groups, requirement.tupleSize, requirement.tractorLength, trumpSuit, levelRank, preferHigh, true);
       if (tractor) selected.push(...tractor);
       continue;
     }
-    selected.push(...consumeTupleGroups(groups, requirement.tupleSize, requirement.groups, levelRank, preferHigh, true));
+    selected.push(...consumeTupleGroups(groups, requirement.tupleSize, requirement.groups, trumpSuit, levelRank, preferHigh, true));
   }
   return selected;
 }
@@ -985,7 +1057,7 @@ function finishRound(state: GameState) {
   }
   const mandatoryBottomPenalty = applyMandatoryBottomPenalty(state, attackerPoints, bottomSaved, lastTrick);
 
-  const hostDown = attackerPoints >= 120;
+  const hostDown = attackerPoints >= 240;
   state.previousHostTeam = hostTeam;
   state.previousHostDown = hostDown;
   state.nextDealerSeat = nextDealer(state);
@@ -1012,7 +1084,9 @@ export function scoreOutcome(attackerPoints: number): { outcome: RoundResult['ou
   if (attackerPoints === 0) return { outcome: 'host-big-shutout', levelDelta: 3, winner: 'host' };
   if (attackerPoints < 120) return { outcome: 'host-small-shutout', levelDelta: 2, winner: 'host' };
   if (attackerPoints < 240) return { outcome: 'host-level-up', levelDelta: 1, winner: 'host' };
-  return { outcome: 'attackers-level-up', levelDelta: Math.floor(attackerPoints / 120) - 1, winner: 'attackers' };
+  const levelDelta = Math.floor((attackerPoints - 240) / 120);
+  if (levelDelta <= 0) return { outcome: 'attackers-down', levelDelta: 0, winner: 'attackers' };
+  return { outcome: 'attackers-level-up', levelDelta, winner: 'attackers' };
 }
 
 function applyMandatoryBottomPenalty(
@@ -1112,6 +1186,7 @@ function resultMessage(state: GameState): string {
   if (result.outcome === 'host-big-shutout') return `${prefix}，大光，庄家队升3级${penalty}`;
   if (result.outcome === 'host-small-shutout') return `${prefix}，小光，庄家队升2级${penalty}`;
   if (result.outcome === 'host-level-up') return `${prefix}，庄家队升1级${penalty}`;
+  if (result.outcome === 'attackers-down') return `${prefix}，闲家下台不升级${penalty}`;
   return `${prefix}，闲家升 ${result.levelDelta} 级${penalty}`;
 }
 
@@ -1237,8 +1312,8 @@ function selectTupleGroups(
   const groups = groupByLogicalCard(pool, trumpSuit, levelRank)
     .filter((group) => group.length >= tupleSize)
     .sort((a, b) => preferHigh
-      ? logicalRankValue(b[0], levelRank) - logicalRankValue(a[0], levelRank)
-      : logicalRankValue(a[0], levelRank) - logicalRankValue(b[0], levelRank)
+      ? compareLogicalCards(b[0], a[0], trumpSuit, levelRank)
+      : compareLogicalCards(a[0], b[0], trumpSuit, levelRank)
     );
   const selected: Card[] = [];
   let remaining = groupsNeeded;
@@ -1265,12 +1340,12 @@ function findTractorSelection(
   const runs: Card[][][] = [];
   for (let start = 0; start <= groups.length - tractorLength; start += 1) {
     const run = groups.slice(start, start + tractorLength);
-    if (isConsecutiveGroups(run, levelRank)) runs.push(run);
+    if (isConsecutiveGroups(run, trumpSuit, levelRank)) runs.push(run);
   }
   if (runs.length === 0) return null;
   runs.sort((a, b) => {
-    const aStrength = logicalRankValue(a.at(-1)![0], levelRank);
-    const bStrength = logicalRankValue(b.at(-1)![0], levelRank);
+    const aStrength = tractorRankValue(a.at(-1)![0], trumpSuit, levelRank);
+    const bStrength = tractorRankValue(b.at(-1)![0], trumpSuit, levelRank);
     return preferHigh ? bStrength - aStrength : aStrength - bStrength;
   });
   return runs[0].flatMap((group) => group.slice(0, tupleSize));

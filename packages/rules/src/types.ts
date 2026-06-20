@@ -84,7 +84,7 @@ export type RoundResult = {
   kittyMultiplier: number;
   hostTeam: SeatIndex[];
   attackerTeam: SeatIndex[];
-  outcome: 'host-big-shutout' | 'host-small-shutout' | 'host-level-up' | 'attackers-level-up';
+  outcome: 'host-big-shutout' | 'host-small-shutout' | 'host-level-up' | 'attackers-down' | 'attackers-level-up';
   levelDelta: number;
   nextDealer: SeatIndex;
   bottomSaved: boolean;
@@ -110,7 +110,7 @@ export type GameEvent = {
 
 export type UpgradeObjective = {
   team: 'host' | 'attackers' | 'hidden' | 'unknown';
-  target: 'host-big-shutout' | 'host-small-shutout' | 'host-level-up' | 'attackers-level-up' | 'survive-hidden';
+  target: 'host-big-shutout' | 'host-small-shutout' | 'host-level-up' | 'attackers-down' | 'attackers-level-up' | 'survive-hidden';
   scoreLine: string;
   summary: string;
 };
@@ -164,10 +164,12 @@ export type GameState = {
   dealerLevel: NormalRank;
   trumpSuit: TrumpSuit | null;
   kitty: Card[];
+  pickedKittyCardIds: string[];
   bottomOwner: SeatIndex | null;
   currentBid: TrumpBid | null;
   bidPasses: SeatIndex[];
   counterPasses: SeatIndex[];
+  counterEligibleSeats: SeatIndex[];
   friendCalls: FriendCall[];
   aceSeen: Record<NormalSuit, number>;
   activeSeat: SeatIndex | null;

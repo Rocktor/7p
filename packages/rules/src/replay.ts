@@ -44,7 +44,7 @@ export function analyzeReplay(state: GameState): ReplayAnalysis {
   return {
     title: `第${state.round}局复盘`,
     summary: result
-      ? `闲家总分 ${result.attackerPoints}，底分 ${result.kittyPoints}，抠底倍数 ${result.kittyMultiplier}，结果：${result.outcome}${penaltyText}。`
+      ? `闲家总分 ${result.attackerPoints}，底分 ${result.kittyPoints}，抠底倍数 ${result.kittyMultiplier}，结果：${formatOutcome(result)}${penaltyText}。`
       : '牌局尚未结束，当前只能生成过程复盘。',
     friendTimeline,
     scoringTimeline,
@@ -53,6 +53,14 @@ export function analyzeReplay(state: GameState): ReplayAnalysis {
     badDecisionTimeline: badDecisionLines(state),
     learningSummary: learningSummary(state)
   };
+}
+
+function formatOutcome(result: NonNullable<GameState['result']>) {
+  if (result.outcome === 'host-big-shutout') return '大光，庄家队升3级';
+  if (result.outcome === 'host-small-shutout') return '小光，庄家队升2级';
+  if (result.outcome === 'host-level-up') return '庄家队升1级';
+  if (result.outcome === 'attackers-down') return '闲家下台不升级';
+  return `闲家升${result.levelDelta}级`;
 }
 
 function formatMandatoryPenaltyTarget(

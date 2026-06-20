@@ -405,6 +405,7 @@ function Hand({
 }) {
   const seat = mySeat(room, user);
   const hand = seat === null ? [] : room.seats[seat].hand;
+  const pickedKitty = new Set(room.pickedKittyCardIds ?? []);
   return (
     <section className="hand-dock">
       <div className="hand-head">
@@ -416,7 +417,7 @@ function Hand({
         {hand.map((card, index) => (
           <button
             key={card.id}
-            className={`card ${card.suit} ${selected.includes(card.id) ? 'selected' : ''}`}
+            className={`card ${card.suit} ${pickedKitty.has(card.id) ? 'kitty-pickup' : ''} ${selected.includes(card.id) ? 'selected' : ''}`}
             style={{ zIndex: index + 1 }}
             onClick={() => setSelected(toggle(selected, card.id))}
           >
@@ -563,6 +564,7 @@ function shouldShowPublicBid(room: GameState) {
 
 function outcomeText(result: NonNullable<GameState['result']>) {
   if (result.outcome === 'attackers-level-up') return `闲家升 ${result.levelDelta} 级`;
+  if (result.outcome === 'attackers-down') return '闲家下台，不升级';
   if (result.outcome === 'host-big-shutout') return '大光，庄家升 3 级';
   if (result.outcome === 'host-small-shutout') return '小光，庄家升 2 级';
   return '庄家升 1 级';
@@ -593,6 +595,9 @@ function ActionPanel({
   const [callOneNth, setCallOneNth] = useState(2);
   const [callTwoNth, setCallTwoNth] = useState(5);
   const friendSuitOptions = useMemo(() => (Object.keys(SUIT_NAME) as NormalSuit[]).filter((suit) => suit !== room.trumpSuit), [room.trumpSuit]);
+  const canBidOrCounter = seat !== null &&
+    room.activeSeat === seat &&
+    (room.phase === 'bidding' || (room.counterEligibleSeats ?? []).includes(seat));
 
   useEffect(() => {
     if (!friendSuitOptions.length) return;
@@ -609,13 +614,13 @@ function ActionPanel({
       {room.phase === 'lobby' && <button onClick={() => onIntent({ type: 'start-game' })}><Shuffle size={16} /> 开始发牌</button>}
       {(room.phase === 'bidding' || room.phase === 'counter') && seat !== null && (
         <div className="action-stack">
-          <button disabled={selected.length < 3} onClick={() => onIntent({ type: 'bid', seat, cardIds: selected })}>
+          <button disabled={!canBidOrCounter || selected.length < 3} onClick={() => onIntent({ type: 'bid', seat, cardIds: selected })}>
             <Send size={16} /> {room.phase === 'bidding' ? '亮主' : '反底'}
           </button>
-          <button className="secondary" onClick={() => onIntent({ type: 'pass-counter', seat })}>
+          <button className="secondary" disabled={!canBidOrCounter} onClick={() => onIntent({ type: 'pass-counter', seat })}>
             {room.phase === 'bidding' ? '不亮' : '不反'}
           </button>
-          <small>两王+同花级牌，或2猫+n张同类王反无主。</small>
+          <small>{canBidOrCounter ? '两王+同花级牌，或2猫+n张同类王反无主。' : `等待 ${seatName(room, room.activeSeat)} 操作。`}</small>
         </div>
       )}
       {room.phase === 'bury' && seat === room.bottomOwner && (

@@ -162,13 +162,9 @@ function groupLabel(card: Card): string {
 
 function nextBotIntent(room: GameState): GameIntent | null {
   if (room.phase === 'bidding' || room.phase === 'counter') {
-    for (const seat of room.seats) {
-      if (seat.isBot) {
-        const intent = decideBotIntent(room, seat.seat);
-        const passes = room.phase === 'bidding' ? room.bidPasses : room.counterPasses;
-        if (intent && !(intent.type === 'pass-counter' && passes.includes(seat.seat))) return intent;
-      }
-    }
+    if (room.activeSeat === null) return null;
+    const seat = room.seats[room.activeSeat];
+    return seat?.isBot ? decideBotIntent(room, room.activeSeat) : null;
   }
   if (room.phase === 'bury' && room.bottomOwner !== null) return decideBotIntent(room, room.bottomOwner);
   if (room.phase === 'friend-call' && room.dealerSeat !== null) return decideBotIntent(room, room.dealerSeat);

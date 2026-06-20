@@ -29,8 +29,11 @@ export type StrategyEvaluation = {
   finished: number;
   hostWinRate: number;
   attackerWinRate: number;
+  attackerDownRate: number;
+  attackerUpgradeRate: number;
   averageAttackerPoints: number;
   averageRawAttackerPoints: number;
+  averageAttackerLevelDelta: number;
   bottomDugRate: number;
   totalRiskCount: number;
   totalBadRiskCount: number;
@@ -49,6 +52,9 @@ export type EvaluationReport = {
     badRiskDelta: number;
     buryRiskDelta: number;
     hostWinRateDelta: number;
+    attackerDownRateDelta: number;
+    attackerUpgradeRateDelta: number;
+    attackerLevelDeltaDelta: number;
   } | null;
 };
 
@@ -70,7 +76,10 @@ export function evaluateStrategies(seeds: string[]): EvaluationReport {
           attackerPointsDelta: round2(challenger.averageAttackerPoints - baseline.averageAttackerPoints),
           badRiskDelta: challenger.totalBadRiskCount - baseline.totalBadRiskCount,
           buryRiskDelta: challenger.totalBuryRiskCount - baseline.totalBuryRiskCount,
-          hostWinRateDelta: round2(challenger.hostWinRate - baseline.hostWinRate)
+          hostWinRateDelta: round2(challenger.hostWinRate - baseline.hostWinRate),
+          attackerDownRateDelta: round2(challenger.attackerDownRate - baseline.attackerDownRate),
+          attackerUpgradeRateDelta: round2(challenger.attackerUpgradeRate - baseline.attackerUpgradeRate),
+          attackerLevelDeltaDelta: round2(challenger.averageAttackerLevelDelta - baseline.averageAttackerLevelDelta)
         }
       : null
   };
@@ -83,10 +92,13 @@ export function evaluateStrategy(options: SimulationOptions): StrategyEvaluation
   for (const game of finishedGames) {
     outcomeCounts[game.result!.outcome] += 1;
   }
-  const hostWins = finishedGames.filter((game) => game.result!.outcome !== 'attackers-level-up').length;
+  const hostWins = finishedGames.filter((game) => isHostOutcome(game.result!.outcome)).length;
   const attackerWins = finishedGames.length - hostWins;
+  const attackerDowns = finishedGames.filter((game) => game.result!.outcome === 'attackers-down' || game.result!.outcome === 'attackers-level-up').length;
+  const attackerLevelUps = finishedGames.filter((game) => game.result!.outcome === 'attackers-level-up').length;
   const totalAttackerPoints = sum(finishedGames.map((game) => game.result!.attackerPoints));
   const totalRawAttackerPoints = sum(finishedGames.map((game) => game.result!.rawAttackerPoints));
+  const totalAttackerLevelDelta = sum(finishedGames.map((game) => game.result!.outcome === 'attackers-level-up' ? game.result!.levelDelta : 0));
   const bottomDug = finishedGames.filter((game) => !game.result!.bottomSaved).length;
   return {
     strategy: options.strategy,
@@ -94,8 +106,11 @@ export function evaluateStrategy(options: SimulationOptions): StrategyEvaluation
     finished: finishedGames.length,
     hostWinRate: ratio(hostWins, finishedGames.length),
     attackerWinRate: ratio(attackerWins, finishedGames.length),
+    attackerDownRate: ratio(attackerDowns, finishedGames.length),
+    attackerUpgradeRate: ratio(attackerLevelUps, finishedGames.length),
     averageAttackerPoints: round2(ratio(totalAttackerPoints, finishedGames.length)),
     averageRawAttackerPoints: round2(ratio(totalRawAttackerPoints, finishedGames.length)),
+    averageAttackerLevelDelta: round2(ratio(totalAttackerLevelDelta, finishedGames.length)),
     bottomDugRate: ratio(bottomDug, finishedGames.length),
     totalRiskCount: sum(gamesDetail.map((game) => game.riskCount)),
     totalBadRiskCount: sum(gamesDetail.map((game) => game.badRiskCount)),
@@ -136,12 +151,8 @@ export function simulateGame(seed: string, strategy: BotStrategyName, maxSteps =
 
 function nextSimulationIntent(state: GameState, strategy: BotStrategyName): GameIntent | null {
   if (state.phase === 'bidding' || state.phase === 'counter') {
-    const passes = state.phase === 'bidding' ? state.bidPasses : state.counterPasses;
-    for (const seat of state.seats) {
-      if (!seat.isBot) continue;
-      const intent = strategyIntent(state, seat.seat, strategy);
-      if (intent && !(intent.type === 'pass-counter' && passes.includes(seat.seat))) return intent;
-    }
+    if (state.activeSeat === null || !state.seats[state.activeSeat]?.isBot) return null;
+    return strategyIntent(state, state.activeSeat, strategy);
   }
   if (state.phase === 'bury' && state.bottomOwner !== null) return strategyIntent(state, state.bottomOwner, strategy);
   if (state.phase === 'friend-call' && state.dealerSeat !== null) return strategyIntent(state, state.dealerSeat, strategy);
@@ -159,6 +170,8 @@ function baselineBotIntent(state: GameState, seat: SeatIndex): GameIntent | null
   if (!player.isBot) return null;
 
   if (state.phase === 'bidding' || state.phase === 'counter') {
+    if (state.activeSeat !== seat) return null;
+    if (state.phase === 'counter' && !(state.counterEligibleSeats ?? []).includes(seat)) return null;
     const bid = findBaselineBid(state, seat);
     if (bid) return { type: 'bid', seat, cardIds: bid };
     return { type: 'pass-counter', seat };
@@ -243,8 +256,13 @@ function emptyOutcomeCounts(): Record<RoundResult['outcome'], number> {
     'host-big-shutout': 0,
     'host-small-shutout': 0,
     'host-level-up': 0,
+    'attackers-down': 0,
     'attackers-level-up': 0
   };
+}
+
+function isHostOutcome(outcome: RoundResult['outcome']): boolean {
+  return outcome === 'host-big-shutout' || outcome === 'host-small-shutout' || outcome === 'host-level-up';
 }
 
 function sum(values: number[]): number {

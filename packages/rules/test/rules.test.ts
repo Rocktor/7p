@@ -68,6 +68,10 @@ function noTrumpBidCards(prefix: string, extraRank: 'SJ' | 'BJ', extraCount: num
   ] as Card[];
 }
 
+function pair(prefix: string, suit: Card['suit'], rank: Card['rank']): Card[] {
+  return [0, 1].map((deck) => ({ id: `${prefix}-${deck}`, deck, suit, rank })) as Card[];
+}
+
 function stateBeforeMandatoryBottomPenalty(rank: 'J' | 'A', finalCard: Card): GameState {
   const state = createGame(`mandatory-bottom-${rank}-${finalCard.suit}`);
   state.phase = 'playing';
@@ -231,40 +235,68 @@ describe('7人6副牌找朋友规则', () => {
   it('亮主后庄家立即拿底，不存在亮主后的继续等待阶段', () => {
     let state = startSeeded('bid-immediate-bury');
     const dealer = state.dealerSeat!;
-    const bidCards = forceBidCards(state, 0);
-    state.seats[0].hand.push(...bidCards);
-    state = dispatch(state, { type: 'bid', seat: 0, cardIds: bidCards.map((card) => card.id) }).state;
+    const originalKittyIds = state.kitty.map((card) => card.id);
+    const bidCards = forceBidCards(state, dealer);
+    state.seats[dealer].hand.push(...bidCards);
+    state = dispatch(state, { type: 'bid', seat: dealer, cardIds: bidCards.map((card) => card.id) }).state;
     expect(state.phase).toBe('bury');
     expect(state.bottomOwner).toBe(dealer);
     expect(state.kitty).toHaveLength(0);
-    expect(state.seats[dealer].hand).toHaveLength(dealer === 0 ? 57 : 54);
+    expect(state.pickedKittyCardIds).toEqual(originalKittyIds);
+    expect(originalKittyIds.every((id) => state.seats[dealer].hand.some((card) => card.id === id))).toBe(true);
+    expect(state.seats[dealer].hand).toHaveLength(57);
     expect(state.currentBid?.cards.map((card) => card.id)).toEqual(bidCards.map((card) => card.id));
     expect(state.events.at(-2)?.message).toContain('亮主为');
     expect(state.events.at(-2)?.message).toContain('张王');
     expect(state.events.at(-1)?.message).toContain('拿起9张底牌');
   });
 
+  it('亮主从庄家开始顺序推进，不亮者退出后续反底行列', () => {
+    let state = startSeeded('bid-order-eligibility');
+    const dealer = state.dealerSeat!;
+    const next = ((dealer + 1) % 7) as SeatIndex;
+    const nextBid = forceBidCards(state, next);
+    state.seats[next].hand.push(...nextBid);
+
+    expect(() => dispatch(state, { type: 'bid', seat: next, cardIds: nextBid.map((card) => card.id) })).toThrow(/还没轮到.*亮主/);
+
+    state = dispatch(state, { type: 'pass-counter', seat: dealer }).state;
+    expect(state.activeSeat).toBe(next);
+    expect(state.bidPasses).toContain(dealer);
+    expect(state.counterEligibleSeats).not.toContain(dealer);
+
+    state = dispatch(state, { type: 'bid', seat: next, cardIds: nextBid.map((card) => card.id) }).state;
+    const dealerBury = state.seats[dealer].hand.filter((card) => card.rank !== 'A').slice(0, 9);
+    state = dispatch(state, { type: 'bury', seat: dealer, cardIds: dealerBury.map((card) => card.id) }).state;
+
+    expect(state.phase).toBe('counter');
+    expect(state.counterEligibleSeats).not.toContain(dealer);
+    expect(() => dispatch(state, { type: 'bid', seat: dealer, cardIds: [] })).toThrow(/不在反底行列/);
+  });
+
   it('每次反底都必须拿当前9张底牌并扣回9张，之后才能继续反底', () => {
     let state = startSeeded('counter-chain');
     const dealer = state.dealerSeat!;
     const firstBid = manualBidCards('first', 'hearts', state.dealerLevel, 1);
-    state.seats[0].hand.push(...firstBid);
-    state = dispatch(state, { type: 'bid', seat: 0, cardIds: firstBid.map((card) => card.id) }).state;
+    state.seats[dealer].hand.push(...firstBid);
+    state = dispatch(state, { type: 'bid', seat: dealer, cardIds: firstBid.map((card) => card.id) }).state;
 
     const dealerBury = state.seats[dealer].hand.filter((card) => card.rank !== 'A').slice(0, 9);
     state = dispatch(state, { type: 'bury', seat: dealer, cardIds: dealerBury.map((card) => card.id) }).state;
     expect(state.phase).toBe('counter');
     expect(state.kitty).toHaveLength(9);
+    expect(state.pickedKittyCardIds).toEqual([]);
 
-    const counterSeatOne = ([0, 1, 2, 3, 4, 5, 6].find((seat) => seat !== dealer) ?? 1) as SeatIndex;
-    const counterSeatTwo = ([0, 1, 2, 3, 4, 5, 6].find((seat) => seat !== dealer && seat !== counterSeatOne) ?? 2) as SeatIndex;
+    const counterSeatOne = state.activeSeat!;
     const secondBid = manualBidCards('second', 'spades', state.dealerLevel, 1);
     state.seats[counterSeatOne].hand.push(...secondBid);
     const seatOneHandBefore = state.seats[counterSeatOne].hand.length;
+    const counterOneKittyIds = state.kitty.map((card) => card.id);
     state = dispatch(state, { type: 'bid', seat: counterSeatOne, cardIds: secondBid.map((card) => card.id) }).state;
     expect(state.phase).toBe('bury');
     expect(state.bottomOwner).toBe(counterSeatOne);
     expect(state.kitty).toHaveLength(0);
+    expect(state.pickedKittyCardIds).toEqual(counterOneKittyIds);
     expect(state.seats[counterSeatOne].hand).toHaveLength(seatOneHandBefore + 9);
     expect(state.events.at(-1)?.message).toContain('反底为');
 
@@ -272,14 +304,18 @@ describe('7人6副牌找朋友规则', () => {
     state = dispatch(state, { type: 'bury', seat: counterSeatOne, cardIds: seatOneBury.map((card) => card.id) }).state;
     expect(state.phase).toBe('counter');
     expect(state.kitty).toHaveLength(9);
+    expect(state.pickedKittyCardIds).toEqual([]);
 
+    const counterSeatTwo = state.activeSeat!;
     const thirdBid = manualBidCards('third', 'diamonds', state.dealerLevel, 2);
     state.seats[counterSeatTwo].hand.push(...thirdBid);
     const seatTwoHandBefore = state.seats[counterSeatTwo].hand.length;
+    const counterTwoKittyIds = state.kitty.map((card) => card.id);
     state = dispatch(state, { type: 'bid', seat: counterSeatTwo, cardIds: thirdBid.map((card) => card.id) }).state;
     expect(state.phase).toBe('bury');
     expect(state.bottomOwner).toBe(counterSeatTwo);
     expect(state.kitty).toHaveLength(0);
+    expect(state.pickedKittyCardIds).toEqual(counterTwoKittyIds);
     expect(state.seats[counterSeatTwo].hand).toHaveLength(seatTwoHandBefore + 9);
   });
 
@@ -365,6 +401,86 @@ describe('7人6副牌找朋友规则', () => {
     expect(shape.tupleSize).toBe(4);
   });
 
+  it('打J黑桃主时，主牌拖拉机跳过J并连接副J、主J和大小猫', () => {
+    const cards = [
+      ...pair('s10', 'spades', '10'),
+      ...pair('sq', 'spades', 'Q'),
+      ...pair('sk', 'spades', 'K'),
+      ...pair('sa', 'spades', 'A'),
+      { id: 'off-j-heart', deck: 0, suit: 'hearts', rank: 'J' },
+      { id: 'off-j-club', deck: 0, suit: 'clubs', rank: 'J' },
+      ...pair('main-j', 'spades', 'J'),
+      ...pair('small-joker', 'joker', 'SJ'),
+      ...pair('big-joker', 'joker', 'BJ')
+    ] as Card[];
+
+    const shape = classifyPlay(cards, 'spades', 'J');
+
+    expect(shape.kind).toBe('tractor');
+    expect(shape.effectiveSuit).toBe('trump');
+    expect(shape.tupleSize).toBe(2);
+    expect(shape.tractorLength).toBe(8);
+  });
+
+  it('打J时副牌拖拉机也会跳过J连接10、Q、K、A', () => {
+    const cards = [
+      ...pair('h10', 'hearts', '10'),
+      ...pair('hq', 'hearts', 'Q'),
+      ...pair('hk', 'hearts', 'K'),
+      ...pair('ha', 'hearts', 'A')
+    ] as Card[];
+
+    const shape = classifyPlay(cards, 'spades', 'J');
+
+    expect(shape.kind).toBe('tractor');
+    expect(shape.effectiveSuit).toBe('hearts');
+    expect(shape.tupleSize).toBe(2);
+    expect(shape.tractorLength).toBe(4);
+  });
+
+  it('AI首出能按当前打J识别并打出跳J副牌拖拉机', () => {
+    const state = createGame('ai-j-tractor-lead');
+    state.phase = 'playing';
+    state.dealerSeat = 0;
+    state.trumpSuit = 'spades';
+    state.dealerLevel = 'J';
+    state.activeSeat = 0;
+    state.currentTrick = {
+      index: 1,
+      leader: 0,
+      plays: [],
+      leadShape: null,
+      winner: null,
+      points: 0
+    };
+    const tractor = [
+      ...pair('h10-ai', 'hearts', '10'),
+      ...pair('hq-ai', 'hearts', 'Q'),
+      ...pair('hk-ai', 'hearts', 'K'),
+      ...pair('ha-ai', 'hearts', 'A')
+    ] as Card[];
+    state.seats[0].isBot = true;
+    state.seats[0].hand = [
+      ...tractor,
+      { id: 'c2-ai', deck: 0, suit: 'clubs', rank: '2' },
+      { id: 'd3-ai', deck: 0, suit: 'diamonds', rank: '3' }
+    ] as Card[];
+    for (let seat = 1; seat < 7; seat += 1) {
+      state.seats[seat].hand = [{ id: `other-c2-${seat}`, deck: seat, suit: 'clubs', rank: '2' } as Card];
+    }
+
+    const intent = decideBotIntent(state, 0);
+
+    expect(intent?.type).toBe('play');
+    if (intent?.type !== 'play') return;
+    const selected = state.seats[0].hand.filter((card) => intent.cardIds.includes(card.id));
+    const shape = classifyPlay(selected, 'spades', 'J');
+    expect(new Set(intent.cardIds)).toEqual(new Set(tractor.map((card) => card.id)));
+    expect(shape.kind).toBe('tractor');
+    expect(shape.effectiveSuit).toBe('hearts');
+    expect(shape.tractorLength).toBe(4);
+  });
+
   it('抠底按末墩每家出牌张数算2的N次方倍数，双抠是4倍', () => {
     const kitty = [
       { id: 'k1', deck: 0, suit: 'clubs', rank: '5' },
@@ -373,14 +489,17 @@ describe('7人6副牌找朋友规则', () => {
     expect(sumPoints(kitty) * 2 ** 2).toBe(60);
   });
 
-  it('计分分档按0分大光、1到119小光、120到239庄家升1级、240下台', () => {
+  it('计分分档按0分大光、1到119小光、120到239庄家升1级、240下台不升级', () => {
     expect(scoreOutcome(0)).toEqual({ outcome: 'host-big-shutout', levelDelta: 3, winner: 'host' });
     expect(scoreOutcome(1)).toEqual({ outcome: 'host-small-shutout', levelDelta: 2, winner: 'host' });
     expect(scoreOutcome(59)).toEqual({ outcome: 'host-small-shutout', levelDelta: 2, winner: 'host' });
     expect(scoreOutcome(119)).toEqual({ outcome: 'host-small-shutout', levelDelta: 2, winner: 'host' });
     expect(scoreOutcome(120)).toEqual({ outcome: 'host-level-up', levelDelta: 1, winner: 'host' });
     expect(scoreOutcome(239)).toEqual({ outcome: 'host-level-up', levelDelta: 1, winner: 'host' });
-    expect(scoreOutcome(240)).toEqual({ outcome: 'attackers-level-up', levelDelta: 1, winner: 'attackers' });
+    expect(scoreOutcome(240)).toEqual({ outcome: 'attackers-down', levelDelta: 0, winner: 'attackers' });
+    expect(scoreOutcome(359)).toEqual({ outcome: 'attackers-down', levelDelta: 0, winner: 'attackers' });
+    expect(scoreOutcome(360)).toEqual({ outcome: 'attackers-level-up', levelDelta: 1, winner: 'attackers' });
+    expect(scoreOutcome(480)).toEqual({ outcome: 'attackers-level-up', levelDelta: 2, winner: 'attackers' });
   });
 
   it('同门不够时必须全跟并补足张数，避免2♦3♦4♦5♦后卡住', () => {
@@ -757,8 +876,8 @@ describe('7人6副牌找朋友规则', () => {
       kittyMultiplier: 2,
       hostTeam: [0, 2],
       attackerTeam: [1, 3, 4, 5, 6],
-      outcome: 'attackers-level-up',
-      levelDelta: 1,
+      outcome: 'attackers-down',
+      levelDelta: 0,
       nextDealer: 3,
       bottomSaved: false,
       mandatoryBottomPenalty: null
@@ -780,7 +899,20 @@ describe('7人6副牌找朋友规则', () => {
   it('G2 扣回的9张可含原底牌，但A不可扣', () => {
     const state = createGame('bury-original-kitty');
     state.phase = 'bury';
+    state.dealerSeat = 0;
     state.bottomOwner = 0;
+    state.trumpSuit = 'spades';
+    state.currentBid = {
+      seat: 0,
+      suit: 'spades',
+      levelRank: '7',
+      levelCardCount: 1,
+      jokerCount: 2,
+      cardIds: [],
+      cards: [],
+      action: 'bid',
+      source: 'hand'
+    };
     const originalKitty = Array.from({ length: 9 }, (_, index) => ({
       id: `ok${index}`,
       deck: index % 6,
@@ -803,6 +935,17 @@ describe('7人6副牌找朋友规则', () => {
     state.bottomOwner = 0;
     state.trumpSuit = 'spades';
     state.dealerLevel = '7';
+    state.currentBid = {
+      seat: 0,
+      suit: 'spades',
+      levelRank: '7',
+      levelCardCount: 1,
+      jokerCount: 2,
+      cardIds: [],
+      cards: [],
+      action: 'bid',
+      source: 'hand'
+    };
     state.seats[0].isBot = true;
     state.seats[0].hand = [
       { id: 'cj1', deck: 0, suit: 'clubs', rank: 'J' },

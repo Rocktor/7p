@@ -105,6 +105,38 @@ export function logicalRankValue(card: Card, levelRank: NormalRank): number {
   return NORMAL_RANK_VALUE.get(card.rank as NormalRank) ?? 0;
 }
 
+export function logicalCardKey(card: Card, trumpSuit: TrumpSuit, levelRank: NormalRank): string {
+  const door = effectiveSuit(card, trumpSuit, levelRank);
+  if (door !== 'trump') return `${door}:${card.rank}`;
+  if (card.suit === 'joker') return `trump:joker:${card.rank}`;
+  if (card.rank === levelRank) {
+    if (trumpSuit !== 'no-trump' && card.suit === trumpSuit) return `trump:main-level:${levelRank}`;
+    return `trump:off-level:${levelRank}`;
+  }
+  return `trump:${card.suit}:${card.rank}`;
+}
+
+export function tractorRankValue(card: Card, trumpSuit: TrumpSuit, levelRank: NormalRank): number {
+  const normalRanks = NORMAL_RANKS.filter((rank) => rank !== levelRank);
+  const normalRank = normalRanks.indexOf(card.rank as NormalRank);
+  const normalTop = normalRanks.length;
+  if (card.rank === 'SJ') return normalTop + (trumpSuit === 'no-trump' ? 2 : 3);
+  if (card.rank === 'BJ') return normalTop + (trumpSuit === 'no-trump' ? 3 : 4);
+  if (card.suit !== 'joker' && card.rank === levelRank) {
+    if (trumpSuit !== 'no-trump' && card.suit === trumpSuit) return normalTop + 2;
+    return normalTop + 1;
+  }
+  return normalRank >= 0 ? normalRank + 1 : 0;
+}
+
+export function compareLogicalCards(a: Card, b: Card, trumpSuit: TrumpSuit, levelRank: NormalRank): number {
+  const rank = tractorRankValue(a, trumpSuit, levelRank) - tractorRankValue(b, trumpSuit, levelRank);
+  if (rank !== 0) return rank;
+  const strength = effectiveRankValue(a, trumpSuit, levelRank) - effectiveRankValue(b, trumpSuit, levelRank);
+  if (strength !== 0) return strength;
+  return cardLabel(a).localeCompare(cardLabel(b));
+}
+
 export function sortCards(cards: Card[], trumpSuit: TrumpSuit, levelRank: NormalRank): Card[] {
   return [...cards].sort((a, b) => {
     const suitA = effectiveSuit(a, trumpSuit, levelRank);

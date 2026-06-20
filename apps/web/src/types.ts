@@ -40,6 +40,7 @@ export type GameState = {
   dealerLevel: string;
   trumpSuit: TrumpSuit | null;
   kitty: Card[];
+  pickedKittyCardIds: string[];
   bottomOwner: number | null;
   currentBid: null | {
     seat: number;
@@ -55,6 +56,7 @@ export type GameState = {
   };
   bidPasses: number[];
   counterPasses: number[];
+  counterEligibleSeats: number[];
   friendCalls: { id: string; suit: NormalSuit; nth: number; seen: number; matchedBy: number | null; matchedTrick: number | null }[];
   aceSeen: Record<NormalSuit, number>;
   activeSeat: number | null;

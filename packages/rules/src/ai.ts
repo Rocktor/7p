@@ -9,6 +9,7 @@ export function decideBotIntent(state: GameState, seat: SeatIndex): GameIntent |
   if (!player.isBot) return null;
 
   if (state.phase === 'bidding') {
+    if (state.activeSeat !== seat) return null;
     const bid = findBid(state, seat);
     if (bid) {
       return {
@@ -26,6 +27,7 @@ export function decideBotIntent(state: GameState, seat: SeatIndex): GameIntent |
   }
 
   if (state.phase === 'counter') {
+    if (state.activeSeat !== seat || !(state.counterEligibleSeats ?? []).includes(seat)) return null;
     const bid = findBid(state, seat);
     if (bid) {
       return {
