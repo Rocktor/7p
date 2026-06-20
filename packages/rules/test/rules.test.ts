@@ -361,6 +361,8 @@ describe('7人6副牌找朋友规则', () => {
     expect(state.friendCalls[0].matchedBy).toBe(friendSeat);
     expect(state.friendCalls[0].pointsAtReveal).toBe(25);
     expect(hostTeamSeats(state)).toContain(friendSeat);
+    const callPayload = state.events.find((event) => event.type === 'friend.call')?.payload as FriendCall[] | undefined;
+    expect(callPayload?.[0].matchedBy).toBeNull();
   });
 
   it('叫朋友不能叫主花色A', () => {
@@ -1002,7 +1004,88 @@ describe('7人6副牌找朋友规则', () => {
       const ownAces = state.seats[0].hand.filter((card) => card.suit === call.suit && card.rank === 'A').length;
       expect(call.nth).toBeGreaterThan(ownAces);
     }
-    expect(intent.strategy?.risks.some((risk) => risk.code === 'self-friend')).toBe(false);
+    expect(intent.strategy?.risks.some((risk) => risk.code === 'self-friend' && risk.severity !== 'info')).toBe(false);
+  });
+
+  it('找朋友优先避开自己持有多张A的门，避免第N张落回庄家', () => {
+    const state = createGame('friend-call-avoid-owned-ace-trap');
+    state.phase = 'friend-call';
+    state.dealerSeat = 5;
+    state.activeSeat = 5;
+    state.trumpSuit = 'spades';
+    state.dealerLevel = '7';
+    state.seats[5].isBot = true;
+    state.seats[5].hand = [
+      { id: 'own-ha', deck: 0, suit: 'hearts', rank: 'A' },
+      { id: 'own-ca1', deck: 0, suit: 'clubs', rank: 'A' },
+      { id: 'own-ca2', deck: 1, suit: 'clubs', rank: 'A' },
+      { id: 'own-da', deck: 0, suit: 'diamonds', rank: 'A' },
+      { id: 'own-c2', deck: 0, suit: 'clubs', rank: '2' },
+      { id: 'own-d2', deck: 0, suit: 'diamonds', rank: '2' }
+    ] as Card[];
+
+    const intent = decideBotIntent(state, 5);
+
+    expect(intent?.type).toBe('call-friends');
+    if (intent?.type !== 'call-friends') return;
+    expect(intent.calls).toEqual([
+      { suit: 'hearts', nth: 2 },
+      { suit: 'diamonds', nth: 2 }
+    ]);
+    expect(intent.calls.some((call) => call.suit === 'clubs')).toBe(false);
+    expect(intent.strategy?.candidates?.find((candidate) => candidate.id === 'clubs:3')?.risks?.some((risk) => risk.code === 'self-friend')).toBe(true);
+  });
+
+  it('庄家叫了自己有A的门后，首出优先打掉自有A防止叫回自己', () => {
+    const state = createGame('lead-owned-called-aces');
+    state.phase = 'playing';
+    state.dealerSeat = 5;
+    state.activeSeat = 5;
+    state.trumpSuit = 'spades';
+    state.dealerLevel = '7';
+    state.friendCalls = [
+      {
+        id: 'friend-clubs',
+        suit: 'clubs',
+        nth: 3,
+        seen: 0,
+        matchedBy: null,
+        matchedTrick: null,
+        pointsAtReveal: null
+      },
+      {
+        id: 'friend-hearts',
+        suit: 'hearts',
+        nth: 2,
+        seen: 0,
+        matchedBy: null,
+        matchedTrick: null,
+        pointsAtReveal: null
+      }
+    ];
+    state.currentTrick = {
+      index: 1,
+      leader: 5,
+      plays: [],
+      leadShape: null,
+      winner: null,
+      points: 0
+    };
+    state.seats[5].isBot = true;
+    state.seats[5].hand = [
+      { id: 'lead-ca1', deck: 0, suit: 'clubs', rank: 'A' },
+      { id: 'lead-ca2', deck: 1, suit: 'clubs', rank: 'A' },
+      { id: 'lead-d10-1', deck: 0, suit: 'diamonds', rank: '10' },
+      { id: 'lead-d10-2', deck: 1, suit: 'diamonds', rank: '10' },
+      { id: 'lead-d10-3', deck: 2, suit: 'diamonds', rank: '10' }
+    ] as Card[];
+
+    const intent = decideBotIntent(state, 5);
+
+    expect(intent?.type).toBe('play');
+    if (intent?.type !== 'play') return;
+    expect(intent.cardIds).toEqual(['lead-ca1', 'lead-ca2']);
+    expect(intent.strategy?.candidates?.some((candidate) => candidate.id === 'own-called-ace-lead')).toBe(true);
   });
 
   it('庄家队不能在对手仍可能有主时只按牌面继续调主', () => {

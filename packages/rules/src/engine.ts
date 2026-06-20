@@ -110,7 +110,12 @@ function cloneState(state: GameState): GameState {
 }
 
 function addEvent(state: GameState, type: string, message: string, payload?: unknown): GameEvent {
-  const event = { seq: state.events.length + 1, type, message, payload };
+  const event = {
+    seq: state.events.length + 1,
+    type,
+    message,
+    payload: payload === undefined ? undefined : structuredClone(payload)
+  };
   state.events.push(event);
   return event;
 }

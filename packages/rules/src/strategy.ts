@@ -156,19 +156,29 @@ export function chooseFriendCallsForUpgrade(
     const ownCount = ownAces.get(suit) ?? 0;
     for (let nth = 1; nth <= 6; nth += 1) {
       const selfHit = nth <= ownCount;
-      const risks: StrategyRisk[] = selfHit
-        ? [{
-            code: 'self-friend',
-            severity: power >= 85 ? 'warn' : 'bad',
-            message: `${suit}第${nth}张A大概率叫到自己；牌力不明朗时等于少找朋友。`
-          }]
-        : [];
+      const ownAceTrap = !selfHit && ownCount > 0;
+      const risks: StrategyRisk[] = [];
+      if (selfHit) {
+        risks.push({
+          code: 'self-friend',
+          severity: power >= 85 ? 'warn' : 'bad',
+          message: `${suit}第${nth}张A大概率叫到自己；牌力不明朗时等于少找朋友。`
+        });
+      } else if (ownAceTrap) {
+        risks.push({
+          code: 'self-friend',
+          severity: 'info',
+          message: `自己持有${ownCount}张${suit}A，若叫第${nth}张A，开局需要优先打掉自有A，避免后续被迫跟牌叫回自己。`
+        });
+      }
       const distanceFromNextExternal = Math.abs(nth - Math.min(6, ownCount + 1));
-      const score = 70 - distanceFromNextExternal * 6 - (selfHit ? (power >= 85 ? 18 : 70) : 0);
+      const selfTrapPenalty = ownAceTrap ? ownCount * 18 : 0;
+      const cleanSuitBonus = ownCount === 0 ? 22 : 0;
+      const score = 70 + cleanSuitBonus - distanceFromNextExternal * 6 - selfTrapPenalty - (selfHit ? (power >= 85 ? 30 : 90) : 0);
       candidates.push({
         id: `${suit}:${nth}`,
         score,
-        summary: `${suit}第${nth}张A${selfHit ? '（自找风险）' : '（优先找外部朋友）'}`,
+        summary: `${suit}第${nth}张A${selfHit ? '（自找风险）' : ownAceTrap ? `（自有${ownCount}张A，需先出清）` : '（干净找外部朋友）'}`,
         calls: [{ suit, nth }],
         risks
       });
@@ -184,14 +194,19 @@ export function chooseFriendCallsForUpgrade(
     if (selected.length === 2) break;
   }
 
-  const selectedRisks = selected.flatMap((call) => {
+  const selectedRisks: StrategyRisk[] = selected.flatMap((call): StrategyRisk[] => {
     const ownCount = ownAces.get(call.suit) ?? 0;
-    if (call.nth > ownCount) return [];
-    return [{
+    if (call.nth <= ownCount) return [{
       code: 'self-friend',
       severity: power >= 85 ? 'warn' : 'bad',
       message: `${call.suit}第${call.nth}张A会先命中自己，只有强牌独打才应接受。`
     } satisfies StrategyRisk];
+    if (ownCount > 0) return [{
+      code: 'self-friend',
+      severity: 'info',
+      message: `已叫${call.suit}第${call.nth}张A且自己持有${ownCount}张该门A，出牌阶段必须优先打掉自有A，防止叫回自己。`
+    } satisfies StrategyRisk];
+    return [];
   });
 
   return {
@@ -205,7 +220,7 @@ export function chooseFriendCallsForUpgrade(
       selectedCalls: selected,
       reasons: [
         describeUpgradeObjective(state, seat).summary,
-        `庄家牌力估计 ${power}，普通牌力优先找外部朋友，强牌才允许自找。`
+        `庄家牌力估计 ${power}，优先选择自己没有A的门；若必须叫自己有A的门，后续要先主动打掉自有A。`
       ],
       risks: selectedRisks,
       candidates: candidates.slice(0, 8)

@@ -84,6 +84,9 @@ export function chooseUpgradePlay(state: GameState, seat: SeatIndex): { cards: C
 function chooseLeadWithMemory(state: GameState, seat: SeatIndex, memory: TableMemory, fallback: Card[]): ScoredCards {
   const hand = state.seats[seat].hand;
   const objective = describeUpgradeObjective(state, seat);
+  const ownCalledAce = ownCalledAceLeadCandidate(state, seat, memory);
+  if (ownCalledAce) return ownCalledAce;
+
   const safeToss = safeTossCandidate(hand, memory, seat);
   if (safeToss) return safeToss;
 
@@ -206,6 +209,28 @@ function pointFollowSafety(
     safe: false,
     summary: '当前墩尚不能确认会归本方，不主动上5/10/K。'
   };
+}
+
+function ownCalledAceLeadCandidate(state: GameState, seat: SeatIndex, memory: TableMemory): ScoredCards | null {
+  if (state.dealerSeat !== seat) return null;
+  const candidates = state.friendCalls.flatMap((call): ScoredCards[] => {
+    if (call.matchedBy !== null) return [];
+    const ownAces = state.seats[seat].hand.filter((card) => {
+      return card.suit === call.suit &&
+        card.rank === 'A' &&
+        effectiveSuit(card, memory.trumpSuit, memory.levelRank) !== 'trump';
+    });
+    if (ownAces.length === 0) return [];
+    if (call.seen + ownAces.length >= call.nth) return [];
+    const sorted = sortCards(ownAces, memory.trumpSuit, memory.levelRank);
+    return [{
+      cards: sorted,
+      score: 1100 + sorted.length * 25,
+      summary: `已叫${call.suit}第${call.nth}张A且自己持有${sorted.length}张，先主动打掉自有A，避免后续被迫跟牌叫回自己。`,
+      risks: []
+    }];
+  });
+  return candidates.sort((a, b) => b.score - a.score)[0] ?? null;
 }
 
 function currentWinnerRelation(state: GameState, seat: SeatIndex): 'teammate' | 'opponent' | 'uncertain' {
@@ -480,6 +505,8 @@ function leadCandidatesForReport(
 ): StrategyCandidate[] {
   const hand = state.seats[seat].hand;
   const candidates: StrategyCandidate[] = [];
+  const ownCalledAce = ownCalledAceLeadCandidate(state, seat, memory);
+  if (ownCalledAce) candidates.push(toCandidate('own-called-ace-lead', ownCalledAce));
   const safe = safeTossCandidate(hand, memory, seat);
   if (safe) candidates.push(toCandidate('safe-toss', safe));
   const nonTrump = bestNonTrumpLead(hand, memory);
