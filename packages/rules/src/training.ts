@@ -23,13 +23,34 @@ export type TrainingRoundSummary = {
   bottomSaved: boolean;
   kittyPoints: number;
   kittyMultiplier: number;
+  mandatoryPenalty: TrainingMandatoryPenalty | null;
   steps: number;
   decisionCount: number;
   riskCount: number;
   badRiskCount: number;
   riskCodes: Record<string, number>;
   levelsAfter: string[];
+  playerStatesAfter: TrainingPlayerState[];
   passedASeats: SeatIndex[];
+};
+
+export type TrainingMandatoryPenalty = {
+  rank: 'J' | 'A';
+  kind: 'main' | 'off';
+  target: NormalRank | null;
+  affected: {
+    seat: SeatIndex;
+    from: NormalRank;
+    to: NormalRank;
+  }[];
+};
+
+export type TrainingPlayerState = {
+  seat: SeatIndex;
+  level: NormalRank;
+  passedJ: boolean;
+  passedA: boolean;
+  label: string;
 };
 
 export type TrainingRun = {
@@ -136,12 +157,27 @@ function summarizeRound(state: GameState, seed: string, steps: number, events: G
     bottomSaved: result.bottomSaved,
     kittyPoints: result.kittyPoints,
     kittyMultiplier: result.kittyMultiplier,
+    mandatoryPenalty: result.mandatoryBottomPenalty
+      ? {
+          rank: result.mandatoryBottomPenalty.rank,
+          kind: result.mandatoryBottomPenalty.kind,
+          target: result.mandatoryBottomPenalty.target,
+          affected: result.mandatoryBottomPenalty.affected
+        }
+      : null,
     steps,
     decisionCount: events.filter((event) => event.type === 'ai.decision').length,
     riskCount: risks.length,
     badRiskCount: risks.filter((risk) => risk.severity === 'bad').length,
     riskCodes: countBy(risks.map((risk) => risk.code)),
-    levelsAfter: state.seats.map((seat) => `${seat.level}${seat.passedMandatory.A ? '*' : ''}`),
+    levelsAfter: state.seats.map(levelStatusLabel),
+    playerStatesAfter: state.seats.map((seat) => ({
+      seat: seat.seat,
+      level: seat.level,
+      passedJ: seat.passedMandatory.J,
+      passedA: seat.passedMandatory.A,
+      label: levelStatusLabel(seat)
+    })),
     passedASeats: state.seats.filter((seat) => seat.passedMandatory.A).map((seat) => seat.seat)
   };
 }
@@ -245,20 +281,46 @@ export function trainingReportMarkdown(run: TrainingRun): string {
   return `${lines.join('\n')}\n`;
 }
 
+export function levelProgressMarkdown(run: TrainingRun): string {
+  const lines = [
+    '# 100轮等级推进明细',
+    '',
+    '## 说明',
+    '',
+    '- 每一行是该轮结束后的 1-7 号玩家等级状态。',
+    '- `J过` 表示该玩家已经按规则通过 J 必打关。',
+    '- `A过` 表示该玩家已经按规则通过 A 必打关。',
+    '- `attackers-down/0` 表示庄家下台、闲家上台但闲家不升级；`attackers-level-up/n` 表示闲家上台并升 n 级。',
+    '',
+    '| 轮次 | 庄家 | 庄家级 | 结果 | 闲家分 | 打回 | 1号 | 2号 | 3号 | 4号 | 5号 | 6号 | 7号 |',
+    '| --- | --- | --- | --- | ---: | --- | --- | --- | --- | --- | --- | --- | --- |',
+    ...run.rounds.map((round) => {
+      const cells = round.playerStatesAfter.length > 0 ? round.playerStatesAfter.map((player) => player.label) : round.levelsAfter;
+      return `| ${round.round} | ${round.dealerSeat === null ? '-' : round.dealerSeat + 1} | ${round.dealerLevel} | ${round.outcome}/${round.levelDelta} | ${round.attackerPoints} | ${formatPenalty(round.mandatoryPenalty)} | ${cells.join(' | ')} |`;
+    })
+  ];
+  return `${lines.join('\n')}\n`;
+}
+
 async function writeTrainingArtifacts(run: TrainingRun, outDir: string) {
   await mkdir(outDir, { recursive: true });
   const slug = `${run.options.seedPrefix}-${run.completedRounds}r-${run.startedAt.replace(/[:.]/g, '-').slice(0, 19)}`;
   const jsonPath = join(outDir, `${slug}.json`);
   const mdPath = join(outDir, `${slug}.md`);
+  const levelPath = join(outDir, `${slug}-levels.md`);
   const latestJsonPath = join(outDir, 'latest-upgrade-training.json');
   const latestMdPath = join(outDir, 'latest-upgrade-training.md');
+  const latestLevelPath = join(outDir, 'latest-level-progress.md');
   const json = `${JSON.stringify(run, null, 2)}\n`;
   const markdown = trainingReportMarkdown(run);
+  const levelMarkdown = levelProgressMarkdown(run);
   await writeFile(jsonPath, json, 'utf8');
   await writeFile(mdPath, markdown, 'utf8');
+  await writeFile(levelPath, levelMarkdown, 'utf8');
   await writeFile(latestJsonPath, json, 'utf8');
   await writeFile(latestMdPath, markdown, 'utf8');
-  return { jsonPath, mdPath, latestJsonPath, latestMdPath };
+  await writeFile(latestLevelPath, levelMarkdown, 'utf8');
+  return { jsonPath, mdPath, levelPath, latestJsonPath, latestMdPath, latestLevelPath };
 }
 
 function buildLearningSummary(run: TrainingRun): string[] {
@@ -374,6 +436,23 @@ function percent(value: number): string {
   return `${Math.round(value * 10000) / 100}%`;
 }
 
+function formatPenalty(penalty: TrainingMandatoryPenalty | null): string {
+  if (!penalty) return '-';
+  const kind = `${penalty.kind === 'main' ? '主' : '副'}${penalty.rank}`;
+  const affected = penalty.affected.length > 0
+    ? penalty.affected.map((item) => `${item.seat + 1}:${item.from}->${item.to}`).join('、')
+    : '无生效打回';
+  return `${kind} ${affected}`;
+}
+
+function levelStatusLabel(seat: GameState['seats'][number]): string {
+  const flags = [
+    seat.passedMandatory.J ? 'J过' : null,
+    seat.passedMandatory.A ? 'A过' : null
+  ].filter(Boolean);
+  return flags.length > 0 ? `${seat.level}(${flags.join('/')})` : seat.level;
+}
+
 function parseArgs(argv: string[]) {
   const args = new Map<string, string>();
   for (const arg of argv) {
@@ -397,5 +476,5 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   });
   const paths = await writeTrainingArtifacts(run, args.outDir);
   console.log(trainingReportMarkdown(run));
-  console.log(`Artifacts:\n- ${paths.jsonPath}\n- ${paths.mdPath}\n- ${paths.latestJsonPath}\n- ${paths.latestMdPath}`);
+  console.log(`Artifacts:\n- ${paths.jsonPath}\n- ${paths.mdPath}\n- ${paths.levelPath}\n- ${paths.latestJsonPath}\n- ${paths.latestMdPath}\n- ${paths.latestLevelPath}`);
 }
