@@ -232,6 +232,7 @@ export function redactRoom(room: GameState, user: UserRecord | null) {
   return {
     ...room,
     currentBid: publicCurrentBid(room),
+    events: publicRoomEvents(room),
     seats: room.seats.map((seat) => {
       const canSeeHand = seat.userId === userId || seat.isBot || room.phase === 'finished';
       return {
@@ -242,6 +243,23 @@ export function redactRoom(room: GameState, user: UserRecord | null) {
     }),
     kitty: room.phase === 'finished' || room.phase === 'counter' ? room.kitty : []
   };
+}
+
+function publicRoomEvents(room: GameState): GameEvent[] {
+  return currentRoundEvents(room).filter((event) => event.type !== 'ai.decision');
+}
+
+function currentRoundEvents(room: GameState): GameEvent[] {
+  if (room.round <= 0) return room.events;
+  const currentRoundPrefix = `第 ${room.round} 局开始`;
+  let latestRoundStart = -1;
+  for (let index = room.events.length - 1; index >= 0; index -= 1) {
+    const event = room.events[index];
+    if (event.type !== 'round.start') continue;
+    if (latestRoundStart < 0) latestRoundStart = index;
+    if (event.message.startsWith(currentRoundPrefix)) return room.events.slice(index);
+  }
+  return latestRoundStart >= 0 ? room.events.slice(latestRoundStart) : room.events;
 }
 
 function publicCurrentBid(room: GameState) {

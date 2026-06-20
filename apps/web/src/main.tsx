@@ -756,11 +756,11 @@ function FriendCallInput({
 }
 
 function EventLog({ room }: { room: GameState }) {
-  const visibleEvents = room.events.filter((event) => event.type !== 'ai.decision');
+  const visibleEvents = currentRoundEvents(room).filter((event) => event.type !== 'ai.decision');
   return (
     <section className="event-log">
       <div className="event-log-head">
-        <h2>事件</h2>
+        <h2>{room.round > 0 ? `第${room.round}局事件` : '事件'}</h2>
         <span>{visibleEvents.length}条</span>
       </div>
       <div className="event-log-list" role="log">
@@ -772,6 +772,19 @@ function EventLog({ room }: { room: GameState }) {
       </div>
     </section>
   );
+}
+
+function currentRoundEvents(room: GameState): GameState['events'] {
+  if (room.round <= 0) return room.events;
+  const currentRoundPrefix = `第 ${room.round} 局开始`;
+  let latestRoundStart = -1;
+  for (let index = room.events.length - 1; index >= 0; index -= 1) {
+    const event = room.events[index];
+    if (event.type !== 'round.start') continue;
+    if (latestRoundStart < 0) latestRoundStart = index;
+    if (event.message.startsWith(currentRoundPrefix)) return room.events.slice(index);
+  }
+  return latestRoundStart >= 0 ? room.events.slice(latestRoundStart) : room.events;
 }
 
 function ReplayPanel({ replay }: { replay: ReplayAnalysis }) {
