@@ -108,6 +108,17 @@ p {
   letter-spacing: 0;
 }
 
+.version-label {
+  display: inline-block;
+  margin-left: 8px;
+  color: rgba(37, 29, 24, 0.58);
+  font-size: 0.36em;
+  font-weight: 800;
+  line-height: 1;
+  vertical-align: baseline;
+  white-space: nowrap;
+}
+
 .topbar p,
 .muted {
   color: rgba(37, 29, 24, 0.66);
