@@ -179,7 +179,7 @@ function App() {
     <div className="app-shell">
       <header className="topbar">
         <div>
-          <h1>7人6副牌找朋友 <span className="version-label">Alpha V20260622</span></h1>
+          <h1>7人6副牌找朋友 <span className="version-label">Alpha V20260623</span></h1>
           <p>联机牌桌 · AI补位 · 复盘分析</p>
         </div>
         <div className="user-pill">
@@ -270,7 +270,7 @@ function AuthScreen({ onAuth }: { onAuth: (user: User) => void }) {
     <div className="auth-screen">
       <div className="auth-panel">
         <div className="brand-mark">ZP7</div>
-        <h1>7人6副牌找朋友 <span className="version-label">Alpha V20260622</span></h1>
+        <h1>7人6副牌找朋友 <span className="version-label">Alpha V20260623</span></h1>
         <p>输入昵称即可本地注册。你可以开房、坐座、切AI，并让服务端按房规强校验。</p>
         <label>昵称<input value={name} onChange={(e) => setName(e.target.value)} /></label>
         <label>密码<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} /></label>
