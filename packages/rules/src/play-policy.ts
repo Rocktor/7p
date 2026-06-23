@@ -8,6 +8,7 @@ import {
   compareLogicalCards,
   effectiveRankValue,
   effectiveSuit,
+  friendCallRankForLevel,
   logicalCardKey,
   pointValue,
   sortCards
@@ -302,18 +303,19 @@ function ownCalledAceLeadCandidate(state: GameState, seat: SeatIndex, memory: Ta
   if (state.dealerSeat !== seat) return null;
   const candidates = state.friendCalls.flatMap((call): ScoredCards[] => {
     if (call.matchedBy !== null) return [];
-    const ownAces = state.seats[seat].hand.filter((card) => {
+    const targetRank = call.rank ?? friendCallRankForLevel(state.dealerLevel);
+    const ownTargetCards = state.seats[seat].hand.filter((card) => {
       return card.suit === call.suit &&
-        card.rank === 'A' &&
+        card.rank === targetRank &&
         effectiveSuit(card, memory.trumpSuit, memory.levelRank) !== 'trump';
     });
-    if (ownAces.length === 0) return [];
-    if (call.seen + ownAces.length >= call.nth) return [];
-    const sorted = sortCards(ownAces, memory.trumpSuit, memory.levelRank);
+    if (ownTargetCards.length === 0) return [];
+    if (call.seen + ownTargetCards.length >= call.nth) return [];
+    const sorted = sortCards(ownTargetCards, memory.trumpSuit, memory.levelRank);
     return [{
       cards: sorted,
       score: 1100 + sorted.length * 25,
-      summary: `已叫${call.suit}第${call.nth}张A且自己持有${sorted.length}张，先主动打掉自有A，避免后续被迫跟牌叫回自己。`,
+      summary: `已叫${call.suit}第${call.nth}张${targetRank}且自己持有${sorted.length}张，先主动打掉自有${targetRank}，避免后续被迫跟牌叫回自己。`,
       risks: []
     }];
   });

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Bot, Check, CirclePlay, DoorOpen, History, Hourglass, LogOut, Play, RotateCcw, Send, Shuffle, UserRound, X } from 'lucide-react';
+import { Bot, Check, CirclePlay, DoorOpen, History, Hourglass, LogOut, Play, RotateCcw, Send, Shuffle, Star, UserRound, X } from 'lucide-react';
 import { createRoom, getReplay, getRoom, listRooms, login, postIntent, register } from './api';
 import type { Card, GameState, NormalSuit, ReplayAnalysis, TrickState, TrumpSuit, User } from './types';
 import './styles.css';
@@ -26,6 +26,17 @@ const TRUMP_NAME: Record<TrumpSuit, string> = {
 };
 
 type IntentSender = (intent: unknown) => Promise<void>;
+type FriendCallRank = 'A' | 'K';
+type CounterBidInfo = {
+  seq: number;
+  seat: number;
+  suit: TrumpSuit;
+  levelRank: string;
+  levelCardCount: number;
+  jokerCount: number;
+  noTrumpRank?: 'SJ' | 'BJ';
+  cards: Card[];
+};
 
 function App() {
   const [user, setUser] = useState<User | null>(() => {
@@ -327,14 +338,24 @@ function Table({
   const emptySeatCount = room.seats.filter((seat) => !seat.userId && !seat.isBot).length;
   const seatControlEnabled = room.phase === 'lobby' || room.phase === 'finished';
   const mySeatIndex = mySeat(room, user);
+  const counterBidsBySeat = counterBidMarks(room);
+  const [counterDetailSeat, setCounterDetailSeat] = useState<number | null>(null);
+  const counterDetailBids = counterDetailSeat === null ? [] : (counterBidsBySeat.get(counterDetailSeat) ?? []);
 
   async function toggleAiSeat(seat: GameState['seats'][number]) {
     if (!seatControlEnabled) return;
     await onIntent({ type: 'toggle-bot', seat: seat.seat, enabled: !seat.isBot });
   }
 
+  const tableClasses = [
+    'table-felt',
+    `phase-${room.phase}`,
+    shouldShowPublicBid(room) ? 'public-stage' : '',
+    room.phase === 'finished' ? 'settlement-mode' : ''
+  ].filter(Boolean).join(' ');
+
   return (
-    <div className={`table-felt ${room.phase === 'finished' ? 'settlement-mode' : ''}`}>
+    <div className={tableClasses}>
       <div className={`table-center ${room.phase === 'finished' ? 'settlement-center' : ''}`}>
         <span className="phase-chip">{phaseLabel(room.phase)}</span>
         <h2>{tableHeadline(room)}</h2>
@@ -376,6 +397,7 @@ function Table({
       {room.seats.map((seat) => {
         const isMySeat = seat.userId === user.id;
         const canSit = seatControlEnabled && mySeatIndex === null && !seat.userId;
+        const counterBids = counterBidsBySeat.get(seat.seat) ?? [];
         return (
         <div
           className={[
@@ -398,6 +420,16 @@ function Table({
             <span>{seat.name}</span>
             <span className="seat-badges">
               {teamRole(room, seat.seat) && <em>{teamRole(room, seat.seat)}</em>}
+              {counterBids.length > 0 && (
+                <button
+                  className="counter-star-button"
+                  title="查看反底牌"
+                  onClick={() => setCounterDetailSeat(seat.seat)}
+                >
+                  <Star size={13} fill="currentColor" />
+                  {counterBids.length > 1 && <span>{counterBids.length}</span>}
+                </button>
+              )}
               {isMySeat && (
                 <button
                   className="seat-avatar-toggle seat-leave-button"
@@ -430,6 +462,46 @@ function Table({
         </div>
         );
       })}
+      {counterDetailSeat !== null && counterDetailBids.length > 0 && (
+        <CounterBidDetail
+          bids={counterDetailBids}
+          room={room}
+          onClose={() => setCounterDetailSeat(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function CounterBidDetail({
+  bids,
+  room,
+  onClose
+}: {
+  bids: CounterBidInfo[];
+  room: GameState;
+  onClose: () => void;
+}) {
+  const seat = bids[0]?.seat ?? null;
+  return (
+    <div className="counter-bid-backdrop" onClick={onClose}>
+      <section className="counter-bid-detail" onClick={(event) => event.stopPropagation()}>
+        <button className="counter-bid-close" onClick={onClose} title="关闭">
+          <X size={15} />
+        </button>
+        <span>反底记录</span>
+        <h3>{seatName(room, seat)}</h3>
+        {bids.map((bid, index) => (
+          <div className="counter-bid-entry" key={`${bid.seq}-${index}`}>
+            <strong>#{bid.seq} {counterBidText(bid)}</strong>
+            <div className="counter-bid-cards">
+              {bid.cards.length === 0 ? (
+                <small>没有拿到公开牌面</small>
+              ) : bid.cards.map((card) => <MiniCard card={card} key={`${bid.seq}-${card.id}`} />)}
+            </div>
+          </div>
+        ))}
+      </section>
     </div>
   );
 }
@@ -444,12 +516,14 @@ function Hand({
   room: GameState;
   user: User;
   selected: string[];
-  setSelected: (ids: string[]) => void;
+  setSelected: React.Dispatch<React.SetStateAction<string[]>>;
   onPlay: () => void;
 }) {
   const seat = mySeat(room, user);
   const hand = seat === null ? [] : room.seats[seat].hand;
   const pickedKitty = new Set(room.pickedKittyCardIds ?? []);
+  const piles = groupHandCards(hand, selected, pickedKitty);
+  const rows = splitHandPiles(piles);
   return (
     <section className="hand-dock">
       <div className="hand-head">
@@ -457,23 +531,92 @@ function Hand({
         <span>{hand.length} 张 · 已选 {selected.length}</span>
         <button disabled={room.activeSeat !== seat || selected.length === 0} onClick={onPlay}><Play size={15} /> 出牌</button>
       </div>
-      <div className="cards">
-        {hand.map((card, index) => (
-          <button
-            key={card.id}
-            className={`card ${card.suit} ${pickedKitty.has(card.id) ? 'kitty-pickup' : ''} ${selected.includes(card.id) ? 'selected' : ''}`}
-            style={{ zIndex: index + 1 }}
-            onClick={() => setSelected(toggle(selected, card.id))}
-          >
-            <span className="corner top">{cardRank(card)}<em>{SUIT_SYMBOL[card.suit]}</em></span>
-            <b>{card.rank === 'SJ' ? '小' : card.rank === 'BJ' ? '大' : SUIT_SYMBOL[card.suit]}</b>
-            <span className="corner bottom">{cardRank(card)}<em>{SUIT_SYMBOL[card.suit]}</em></span>
-            <small>{card.deck + 1}</small>
-          </button>
+      <div className={`hand-grid ${rows.length > 1 ? 'two-rows' : 'one-row'}`}>
+        {rows.map((row, rowIndex) => (
+          <div className="hand-row" key={rowIndex}>
+            {row.map((pile, index) => {
+              const x = row.length === 1 ? 50 : (index / (row.length - 1)) * 100;
+              const shift = row.length === 1 ? '-50%' : index === 0 ? '0%' : index === row.length - 1 ? '-100%' : '-50%';
+              const selectedCount = pile.selectedCount;
+              return (
+                <button
+                  key={pile.key}
+                  className={[
+                    'hand-pile',
+                    pile.lead.suit,
+                    pile.cards.length > 1 ? 'duplicated' : '',
+                    pile.pickedCount > 0 ? 'kitty-pickup' : '',
+                    selectedCount > 0 ? 'selected' : '',
+                    selectedCount > 0 ? `selected-count-${Math.min(selectedCount, 3)}` : '',
+                    selectedCount > 3 ? 'selected-count-many' : '',
+                    selectedCount === pile.cards.length ? 'fully-selected' : ''
+                  ].filter(Boolean).join(' ')}
+                  style={{
+                    left: `${x}%`,
+                    '--pile-shift': shift,
+                    zIndex: index + 1
+                  } as React.CSSProperties}
+                  title={`${cardSuitName(pile.lead)}${cardRank(pile.lead)} · ${pile.cards.length}张 · 已选${selectedCount} · 单击逐张选择`}
+                  onClick={() => setSelected((current) => cyclePileSelection(current, pile.cards))}
+                >
+                  {pile.cards.length > 2 && <span className="pile-shadow two" />}
+                  {pile.cards.length > 1 && <span className="pile-shadow one" />}
+                  <span className="pile-face">
+                    <span className="corner top">{cardRank(pile.lead)}<em>{SUIT_SYMBOL[pile.lead.suit]}</em></span>
+                    <b>{pile.lead.rank === 'SJ' ? '小' : pile.lead.rank === 'BJ' ? '大' : SUIT_SYMBOL[pile.lead.suit]}</b>
+                    <span className="corner bottom">{cardRank(pile.lead)}<em>{SUIT_SYMBOL[pile.lead.suit]}</em></span>
+                    <small>{pile.cards.length > 1 ? `${pile.cards.length}张` : pile.lead.deck + 1}</small>
+                  </span>
+                  {pile.cards.length > 1 && <span className="pile-count-badge">×{pile.cards.length}</span>}
+                  {pile.pickedCount > 0 && <span className="pile-kitty-badge">底</span>}
+                  {selectedCount > 0 && <span className="pile-select-badge">{selectedCount}/{pile.cards.length}</span>}
+                </button>
+              );
+            })}
+          </div>
         ))}
       </div>
     </section>
   );
+}
+
+type HandPile = {
+  key: string;
+  lead: Card;
+  cards: Card[];
+  selectedCount: number;
+  pickedCount: number;
+};
+
+function groupHandCards(hand: Card[], selected: string[], pickedKitty: Set<string>): HandPile[] {
+  const selectedSet = new Set(selected);
+  const groups = new Map<string, Card[]>();
+  for (const card of hand) {
+    const key = `${card.suit}:${card.rank}`;
+    groups.set(key, [...(groups.get(key) ?? []), card]);
+  }
+  return [...groups.entries()].map(([key, cards]) => ({
+    key,
+    lead: cards[0],
+    cards,
+    selectedCount: cards.filter((card) => selectedSet.has(card.id)).length,
+    pickedCount: cards.filter((card) => pickedKitty.has(card.id)).length
+  }));
+}
+
+function splitHandPiles(piles: HandPile[]) {
+  if (piles.length <= 24) return [piles];
+  const split = Math.ceil(piles.length / 2);
+  return [piles.slice(0, split), piles.slice(split)];
+}
+
+function cyclePileSelection(selected: string[], cards: Card[]) {
+  const cardIds = cards.map((card) => card.id);
+  const selectedSet = new Set(selected);
+  const selectedCount = cardIds.filter((id) => selectedSet.has(id)).length;
+  const nextCount = selectedCount >= cardIds.length ? 0 : selectedCount + 1;
+  const withoutPile = selected.filter((id) => !cardIds.includes(id));
+  return [...withoutPile, ...cardIds.slice(0, nextCount)];
 }
 
 function MiniCard({ card, highlighted = false }: { card: Card; highlighted?: boolean }) {
@@ -620,6 +763,11 @@ function cardRank(card: Card) {
   return card.rank;
 }
 
+function cardSuitName(card: Card) {
+  if (card.suit === 'joker') return '王';
+  return SUIT_NAME[card.suit];
+}
+
 function ActionPanel({
   room,
   user,
@@ -639,6 +787,7 @@ function ActionPanel({
   const [callOneNth, setCallOneNth] = useState(2);
   const [callTwoNth, setCallTwoNth] = useState(5);
   const friendSuitOptions = useMemo(() => (Object.keys(SUIT_NAME) as NormalSuit[]).filter((suit) => suit !== room.trumpSuit), [room.trumpSuit]);
+  const friendCallRank = friendCallRankForRoom(room);
   const canBidOrCounter = seat !== null &&
     room.activeSeat === seat &&
     (room.phase === 'bidding' || (room.counterEligibleSeats ?? []).includes(seat));
@@ -678,8 +827,8 @@ function ActionPanel({
       )}
       {room.phase === 'friend-call' && seat === room.dealerSeat && (
         <div className="friend-form">
-          <FriendCallInput suit={callOneSuit} nth={callOneNth} suitOptions={friendSuitOptions} setSuit={setCallOneSuit} setNth={setCallOneNth} />
-          <FriendCallInput suit={callTwoSuit} nth={callTwoNth} suitOptions={friendSuitOptions} setSuit={setCallTwoSuit} setNth={setCallTwoNth} />
+          <FriendCallInput suit={callOneSuit} rank={friendCallRank} nth={callOneNth} suitOptions={friendSuitOptions} setSuit={setCallOneSuit} setNth={setCallOneNth} />
+          <FriendCallInput suit={callTwoSuit} rank={friendCallRank} nth={callTwoNth} suitOptions={friendSuitOptions} setSuit={setCallTwoSuit} setNth={setCallTwoNth} />
           <button disabled={friendSuitOptions.length < 2} onClick={() => onIntent({
             type: 'call-friends',
             seat,
@@ -714,16 +863,18 @@ function FriendCallStatus({
   room: GameState;
 }) {
   if (call.matchedBy !== null) {
+    const rank = call.rank ?? friendCallRankForRoom(room);
     return (
       <p className="friend-call-row matched">
-        <span>{SUIT_NAME[call.suit]}第{call.nth}张A</span>
+        <span>{SUIT_NAME[call.suit]}第{call.nth}张{rank}</span>
         <small>· {seatName(room, call.matchedBy)} 第{call.matchedTrick ?? '?'}墩找到</small>
       </p>
     );
   }
+  const rank = call.rank ?? friendCallRankForRoom(room);
   return (
     <p className="friend-call-row">
-      <span>{SUIT_NAME[call.suit]}第{call.nth}张A</span>
+      <span>{SUIT_NAME[call.suit]}第{call.nth}张{rank}</span>
       <small>· 已见{call.seen}</small>
     </p>
   );
@@ -731,12 +882,14 @@ function FriendCallStatus({
 
 function FriendCallInput({
   suit,
+  rank,
   nth,
   suitOptions,
   setSuit,
   setNth
 }: {
   suit: NormalSuit;
+  rank: FriendCallRank;
   nth: number;
   suitOptions: NormalSuit[];
   setSuit: (suit: NormalSuit) => void;
@@ -750,9 +903,13 @@ function FriendCallInput({
         ))}
       </select>
       <input min={1} max={6} type="number" value={nth} onChange={(e) => setNth(Number(e.target.value))} />
-      <span>张A</span>
+      <span>张{rank}</span>
     </div>
   );
+}
+
+function friendCallRankForRoom(room: GameState): FriendCallRank {
+  return room.dealerLevel === 'A' ? 'K' : 'A';
 }
 
 function EventLog({ room }: { room: GameState }) {
@@ -785,6 +942,61 @@ function currentRoundEvents(room: GameState): GameState['events'] {
     if (event.message.startsWith(currentRoundPrefix)) return room.events.slice(index);
   }
   return latestRoundStart >= 0 ? room.events.slice(latestRoundStart) : room.events;
+}
+
+function counterBidMarks(room: GameState): Map<number, CounterBidInfo[]> {
+  const marks = new Map<number, CounterBidInfo[]>();
+  for (const event of currentRoundEvents(room)) {
+    if (event.type !== 'trump.counter') continue;
+    const payload = event.payload;
+    if (!isCounterBidPayload(payload)) continue;
+    const bid: CounterBidInfo = {
+      seq: event.seq,
+      seat: payload.seat,
+      suit: payload.suit,
+      levelRank: String(payload.levelRank ?? room.dealerLevel),
+      levelCardCount: Number(payload.levelCardCount ?? 0),
+      jokerCount: Number(payload.jokerCount ?? 0),
+      noTrumpRank: payload.noTrumpRank === 'SJ' || payload.noTrumpRank === 'BJ' ? payload.noTrumpRank : undefined,
+      cards: Array.isArray(payload.cards) ? payload.cards.filter(isCardSnapshot) : []
+    };
+    marks.set(bid.seat, [...(marks.get(bid.seat) ?? []), bid]);
+  }
+  return marks;
+}
+
+function isCounterBidPayload(payload: unknown): payload is {
+  seat: number;
+  suit: TrumpSuit;
+  levelRank?: unknown;
+  levelCardCount?: unknown;
+  jokerCount?: unknown;
+  noTrumpRank?: unknown;
+  cards?: unknown;
+} {
+  if (!payload || typeof payload !== 'object') return false;
+  const bid = payload as { seat?: unknown; suit?: unknown };
+  return typeof bid.seat === 'number' && isTrumpSuit(bid.suit);
+}
+
+function isTrumpSuit(value: unknown): value is TrumpSuit {
+  return value === 'no-trump' || value === 'spades' || value === 'hearts' || value === 'clubs' || value === 'diamonds';
+}
+
+function isCardSnapshot(value: unknown): value is Card {
+  if (!value || typeof value !== 'object') return false;
+  const card = value as Partial<Card>;
+  return typeof card.id === 'string' &&
+    typeof card.deck === 'number' &&
+    typeof card.suit === 'string' &&
+    typeof card.rank === 'string';
+}
+
+function counterBidText(bid: CounterBidInfo) {
+  if (bid.suit === 'no-trump') {
+    return `2猫 + ${bid.levelCardCount}张${jokerName(bid.noTrumpRank)} · 无主`;
+  }
+  return `${bid.jokerCount}张王 + ${bid.levelCardCount}张${TRUMP_NAME[bid.suit]} ${bid.levelRank}`;
 }
 
 function ReplayPanel({ replay }: { replay: ReplayAnalysis }) {
@@ -929,10 +1141,6 @@ function latestTrickComplete(room: GameState) {
     points,
     trickIndex: match ? Number(match[1]) : room.completedTricks.at(-1)?.index ?? 0
   };
-}
-
-function toggle(items: string[], id: string) {
-  return items.includes(id) ? items.filter((item) => item !== id) : [...items, id];
 }
 
 createRoot(document.getElementById('root')!).render(<App />);

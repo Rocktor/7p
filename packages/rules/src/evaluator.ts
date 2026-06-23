@@ -1,4 +1,4 @@
-import { NORMAL_SUITS, type NormalSuit, pointValue, sortCards } from './cards.js';
+import { NORMAL_SUITS, type NormalSuit, friendCallRankForLevel, pointValue, sortCards } from './cards.js';
 import { decideBotIntent } from './ai.js';
 import { canCounterBid, createGame, dispatch, legalCardsForSimplePlay, parseTrumpBid, trumpBidStrength } from './engine.js';
 import type { GameIntent, GameState, RoundResult, SeatIndex, StrategyDecisionReport, StrategyRisk } from './types.js';
@@ -178,7 +178,8 @@ function baselineBotIntent(state: GameState, seat: SeatIndex): GameIntent | null
   }
 
   if (state.phase === 'bury' && state.bottomOwner === seat) {
-    const cards = sortCards(player.hand.filter((card) => card.rank !== 'A'), state.trumpSuit ?? 'spades', state.dealerLevel)
+    const friendRank = friendCallRankForLevel(state.dealerLevel);
+    const cards = sortCards(player.hand.filter((card) => card.rank !== friendRank), state.trumpSuit ?? 'spades', state.dealerLevel)
       .sort((a, b) => pointValue(a) - pointValue(b))
       .slice(0, 9);
     return { type: 'bury', seat, cardIds: cards.map((card) => card.id) };
@@ -221,15 +222,16 @@ function findBaselineBid(state: GameState, seat: SeatIndex): string[] | null {
 
 function baselineFriendCalls(state: GameState): { suit: NormalSuit; nth: number }[] {
   const dealer = state.dealerSeat === null ? null : state.seats[state.dealerSeat];
-  const visibleAces = new Set(
+  const targetRank = friendCallRankForLevel(state.dealerLevel);
+  const visibleTargetCards = new Set(
     (dealer?.hand ?? [])
-      .filter((card) => card.rank === 'A' && card.suit !== 'joker')
+      .filter((card) => card.rank === targetRank && card.suit !== 'joker')
       .map((card) => `${card.suit}:${card.deck}`)
   );
   const calls: { suit: NormalSuit; nth: number }[] = [];
   const availableSuits = NORMAL_SUITS.filter((suit) => suit !== state.trumpSuit);
   for (const suit of availableSuits) {
-    const ownCount = [...visibleAces].filter((key) => key.startsWith(`${suit}:`)).length;
+    const ownCount = [...visibleTargetCards].filter((key) => key.startsWith(`${suit}:`)).length;
     calls.push({ suit, nth: Math.min(6, Math.max(1, ownCount + 1)) });
     if (calls.length === 2) return calls;
   }

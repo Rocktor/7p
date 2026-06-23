@@ -57,7 +57,7 @@ export type GameState = {
   bidPasses: number[];
   counterPasses: number[];
   counterEligibleSeats: number[];
-  friendCalls: { id: string; suit: NormalSuit; nth: number; seen: number; matchedBy: number | null; matchedTrick: number | null }[];
+  friendCalls: { id: string; suit: NormalSuit; rank?: 'A' | 'K'; nth: number; seen: number; matchedBy: number | null; matchedTrick: number | null }[];
   aceSeen: Record<NormalSuit, number>;
   activeSeat: number | null;
   currentTrick: TrickState | null;

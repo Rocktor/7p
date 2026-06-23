@@ -8,6 +8,7 @@ import {
   cardLabel,
   effectiveRankValue,
   effectiveSuit,
+  friendCallRankForLevel,
   pointValue,
   sortCards
 } from './cards.js';
@@ -80,7 +81,8 @@ export function describeUpgradeObjective(state: GameState, seat: SeatIndex): Upg
 export function chooseUpgradeBury(state: GameState, seat: SeatIndex): { cards: Card[]; report: StrategyDecisionReport } {
   const player = state.seats[seat];
   const trumpSuit = requireTrumpSuit(state);
-  const pool = player.hand.filter((card) => card.rank !== 'A');
+  const friendRank = friendCallRankForLevel(state.dealerLevel);
+  const pool = player.hand.filter((card) => card.rank !== friendRank);
   const selected = scoreBuryCards(pool, trumpSuit, state.dealerLevel)
     .sort((a, b) => a.cost - b.cost)
     .slice(0, 9)
@@ -144,16 +146,19 @@ export function chooseFriendCallsForUpgrade(
 ): { calls: { suit: NormalSuit; nth: number }[]; report: StrategyDecisionReport } {
   const trumpSuit = state.trumpSuit;
   const availableSuits = NORMAL_SUITS.filter((suit) => suit !== trumpSuit);
-  const ownAces = new Map<NormalSuit, number>();
-  for (const suit of NORMAL_SUITS) ownAces.set(suit, 0);
+  const callRank = friendCallRankForLevel(state.dealerLevel);
+  const ownTargetCards = new Map<NormalSuit, number>();
+  for (const suit of NORMAL_SUITS) ownTargetCards.set(suit, 0);
   for (const card of state.seats[seat].hand) {
-    if (card.suit !== 'joker' && card.rank === 'A') ownAces.set(card.suit, (ownAces.get(card.suit) ?? 0) + 1);
+    if (card.suit !== 'joker' && card.rank === callRank) {
+      ownTargetCards.set(card.suit, (ownTargetCards.get(card.suit) ?? 0) + 1);
+    }
   }
   const power = estimateHostPower(state, seat);
   const candidates: StrategyCandidate[] = [];
 
   for (const suit of availableSuits) {
-    const ownCount = ownAces.get(suit) ?? 0;
+    const ownCount = ownTargetCards.get(suit) ?? 0;
     for (let nth = 1; nth <= 6; nth += 1) {
       const selfHit = nth <= ownCount;
       const ownAceTrap = !selfHit && ownCount > 0;
@@ -162,13 +167,13 @@ export function chooseFriendCallsForUpgrade(
         risks.push({
           code: 'self-friend',
           severity: power >= 85 ? 'warn' : 'bad',
-          message: `${suit}第${nth}张A大概率叫到自己；牌力不明朗时等于少找朋友。`
+          message: `${suit}第${nth}张${callRank}大概率叫到自己；牌力不明朗时等于少找朋友。`
         });
       } else if (ownAceTrap) {
         risks.push({
           code: 'self-friend',
           severity: 'info',
-          message: `自己持有${ownCount}张${suit}A，若叫第${nth}张A，开局需要优先打掉自有A，避免后续被迫跟牌叫回自己。`
+          message: `自己持有${ownCount}张${suit}${callRank}，若叫第${nth}张${callRank}，开局需要优先打掉自有${callRank}，避免后续被迫跟牌叫回自己。`
         });
       }
       const distanceFromNextExternal = Math.abs(nth - Math.min(6, ownCount + 1));
@@ -178,7 +183,7 @@ export function chooseFriendCallsForUpgrade(
       candidates.push({
         id: `${suit}:${nth}`,
         score,
-        summary: `${suit}第${nth}张A${selfHit ? '（自找风险）' : ownAceTrap ? `（自有${ownCount}张A，需先出清）` : '（干净找外部朋友）'}`,
+        summary: `${suit}第${nth}张${callRank}${selfHit ? '（自找风险）' : ownAceTrap ? `（自有${ownCount}张${callRank}，需先出清）` : '（干净找外部朋友）'}`,
         calls: [{ suit, nth }],
         risks
       });
@@ -195,16 +200,16 @@ export function chooseFriendCallsForUpgrade(
   }
 
   const selectedRisks: StrategyRisk[] = selected.flatMap((call): StrategyRisk[] => {
-    const ownCount = ownAces.get(call.suit) ?? 0;
+    const ownCount = ownTargetCards.get(call.suit) ?? 0;
     if (call.nth <= ownCount) return [{
       code: 'self-friend',
       severity: power >= 85 ? 'warn' : 'bad',
-      message: `${call.suit}第${call.nth}张A会先命中自己，只有强牌独打才应接受。`
+      message: `${call.suit}第${call.nth}张${callRank}会先命中自己，只有强牌独打才应接受。`
     } satisfies StrategyRisk];
     if (ownCount > 0) return [{
       code: 'self-friend',
       severity: 'info',
-      message: `已叫${call.suit}第${call.nth}张A且自己持有${ownCount}张该门A，出牌阶段必须优先打掉自有A，防止叫回自己。`
+      message: `已叫${call.suit}第${call.nth}张${callRank}且自己持有${ownCount}张该门${callRank}，出牌阶段必须优先打掉自有${callRank}，防止叫回自己。`
     } satisfies StrategyRisk];
     return [];
   });
@@ -220,7 +225,7 @@ export function chooseFriendCallsForUpgrade(
       selectedCalls: selected,
       reasons: [
         describeUpgradeObjective(state, seat).summary,
-        `庄家牌力估计 ${power}，优先选择自己没有A的门；若必须叫自己有A的门，后续要先主动打掉自有A。`
+        `庄家牌力估计 ${power}，优先选择自己没有${callRank}的门；若必须叫自己有${callRank}的门，后续要先主动打掉自有${callRank}。`
       ],
       risks: selectedRisks,
       candidates: candidates.slice(0, 8)
@@ -417,7 +422,8 @@ function detectBuryRisks(
 }
 
 function pointOnlyBury(cards: Card[], trumpSuit: TrumpSuit, levelRank: NormalRank): Card[] {
-  return sortCards(cards.filter((card) => card.rank !== 'A'), trumpSuit, levelRank)
+  const friendRank = friendCallRankForLevel(levelRank);
+  return sortCards(cards.filter((card) => card.rank !== friendRank), trumpSuit, levelRank)
     .sort((a, b) => pointValue(a) - pointValue(b))
     .slice(0, 9);
 }

@@ -1,3 +1,4 @@
+import { friendCallRankForLevel } from './cards.js';
 import { hostTeamSeats } from './engine.js';
 import { badDecisionLines, learningSummary } from './strategy.js';
 import type { GameState } from './types.js';
@@ -16,8 +17,9 @@ export type ReplayAnalysis = {
 export function analyzeReplay(state: GameState): ReplayAnalysis {
   const hostTeam = hostTeamSeats(state);
   const friendTimeline = state.friendCalls.map((call) => {
+    const rank = call.rank ?? friendCallRankForLevel(state.dealerLevel);
     if (call.matchedBy === null) {
-      return `${call.suit}第${call.nth}张A未触发，相关分数最终并入闲家。`;
+      return `${call.suit}第${call.nth}张${rank}未触发，相关分数最终并入闲家。`;
     }
     const player = state.seats[call.matchedBy];
     return `${player.name} 在第${call.matchedTrick}墩暴露为朋友，暴露前暂存 ${call.pointsAtReveal ?? 0} 分追溯归庄家队。`;

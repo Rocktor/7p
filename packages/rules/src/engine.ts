@@ -13,8 +13,8 @@ import {
   createDecks,
   effectiveRankValue,
   effectiveSuit,
-  isAce,
   isJoker,
+  friendCallRankForLevel,
   logicalCardKey,
   pointValue,
   rankUpOne,
@@ -544,7 +544,10 @@ function buryKitty(state: GameState, seat: SeatIndex, cardIds: string[]) {
   const p = player(state, seat);
   const handBefore = [...p.hand];
   const cards = getCardsByIds(p.hand, cardIds);
-  if (cards.some(isAce)) throw new Error('扣底不能扣任何A');
+  const friendRank = friendCallRankForLevel(state.dealerLevel);
+  if (cards.some((card) => card.suit !== 'joker' && card.rank === friendRank)) {
+    throw new Error(`扣底不能扣找朋友目标牌${friendRank}`);
+  }
   const trumpSuit = state.trumpSuit ?? state.currentBid?.suit ?? 'spades';
   const aiSample = p.isBot ? analyzeBurySelection(state, seat, cards) : null;
   p.hand = removeCards(p.hand, cards.map((card) => card.id));
@@ -589,18 +592,20 @@ function enterFriendCall(state: GameState) {
 function callFriends(state: GameState, seat: SeatIndex, calls: { suit: NormalSuit; nth: number }[]) {
   assertPhase(state, ['friend-call']);
   if (seat !== state.dealerSeat) throw new Error('只有庄家可以叫朋友');
-  if (calls.length !== 2) throw new Error('必须叫两张A');
+  const callRank = friendCallRankForLevel(state.dealerLevel);
+  if (calls.length !== 2) throw new Error(`必须叫两张${callRank}`);
   const seen = new Set<string>();
   state.friendCalls = calls.map((call, index) => {
-    if (!NORMAL_SUITS.includes(call.suit)) throw new Error('叫A花色无效');
-    if (state.trumpSuit !== 'no-trump' && call.suit === state.trumpSuit) throw new Error('不能叫主花色A');
-    if (call.nth < 1 || call.nth > DECK_COUNT) throw new Error('第N张A必须在1到6之间');
-    const key = `${call.suit}:${call.nth}`;
-    if (seen.has(key)) throw new Error('不能重复叫完全相同的A');
+    if (!NORMAL_SUITS.includes(call.suit)) throw new Error(`叫${callRank}花色无效`);
+    if (state.trumpSuit !== 'no-trump' && call.suit === state.trumpSuit) throw new Error(`不能叫主花色${callRank}`);
+    if (call.nth < 1 || call.nth > DECK_COUNT) throw new Error(`第N张${callRank}必须在1到6之间`);
+    const key = `${call.suit}:${callRank}:${call.nth}`;
+    if (seen.has(key)) throw new Error(`不能重复叫完全相同的${callRank}`);
     seen.add(key);
     return {
       id: `friend-${index + 1}`,
       suit: call.suit,
+      rank: callRank,
       nth: call.nth,
       seen: state.aceSeen[call.suit],
       matchedBy: null,
@@ -614,7 +619,7 @@ function callFriends(state: GameState, seat: SeatIndex, calls: { suit: NormalSui
   addEvent(
     state,
     'friend.call',
-    `${player(state, seat).name} 叫朋友：${calls.map((call) => `${call.suit}第${call.nth}张A`).join('、')}`,
+    `${player(state, seat).name} 叫朋友：${state.friendCalls.map((call) => `${call.suit}第${call.nth}张${call.rank ?? callRank}`).join('、')}`,
     state.friendCalls
   );
 }
@@ -1054,17 +1059,21 @@ function coversComponents(candidate: PlayComponent[], lead: PlayComponent[]): bo
 }
 
 function detectFriends(state: GameState, seat: SeatIndex, cards: Card[]) {
+  const defaultCallRank = friendCallRankForLevel(state.dealerLevel);
   for (const card of cards) {
-    if (card.suit === 'joker' || card.rank !== 'A') continue;
+    if (card.suit === 'joker') continue;
+    const cardRank = card.rank;
+    if (!state.friendCalls.some((call) => call.suit === card.suit && (call.rank ?? defaultCallRank) === cardRank)) continue;
     state.aceSeen[card.suit] += 1;
     for (const call of state.friendCalls) {
-      if (call.matchedBy !== null || call.suit !== card.suit) continue;
+      const callRank = call.rank ?? defaultCallRank;
+      if (call.matchedBy !== null || call.suit !== card.suit || callRank !== cardRank) continue;
       call.seen = state.aceSeen[card.suit];
       if (call.seen >= call.nth) {
         call.matchedBy = seat;
         call.matchedTrick = state.currentTrick?.index ?? null;
         call.pointsAtReveal = player(state, seat).personalPoints;
-        addEvent(state, 'friend.reveal', `${player(state, seat).name} 打出第 ${call.nth} 张${call.suit}A，身份暴露`, {
+        addEvent(state, 'friend.reveal', `${player(state, seat).name} 打出第 ${call.nth} 张${call.suit}${callRank}，身份暴露`, {
           call,
           temporaryPoints: call.pointsAtReveal
         });

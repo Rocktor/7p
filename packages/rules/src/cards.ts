@@ -24,6 +24,7 @@ export const NORMAL_RANKS = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 
 export type NormalRank = (typeof NORMAL_RANKS)[number];
 export type JokerRank = 'SJ' | 'BJ';
 export type Rank = NormalRank | JokerRank;
+export type FriendCallRank = 'A' | 'K';
 
 export const LEVEL_ORDER: NormalRank[] = ['7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
 const NORMAL_RANK_VALUE = new Map<NormalRank, number>(
@@ -59,6 +60,10 @@ export function isJoker(card: Card): boolean {
 
 export function isAce(card: Card): boolean {
   return card.suit !== 'joker' && card.rank === 'A';
+}
+
+export function friendCallRankForLevel(levelRank: NormalRank): FriendCallRank {
+  return levelRank === 'A' ? 'K' : 'A';
 }
 
 export function isNormalSuit(suit: Suit): suit is NormalSuit {

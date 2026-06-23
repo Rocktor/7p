@@ -1,4 +1,4 @@
-import type { Card, JokerRank, NormalRank, NormalSuit, TrumpSuit } from './cards.js';
+import type { Card, FriendCallRank, JokerRank, NormalRank, NormalSuit, TrumpSuit } from './cards.js';
 
 export type SeatIndex = 0 | 1 | 2 | 3 | 4 | 5 | 6;
 export const SEATS: SeatIndex[] = [0, 1, 2, 3, 4, 5, 6];
@@ -35,6 +35,7 @@ export type TrumpBid = {
 export type FriendCall = {
   id: string;
   suit: NormalSuit;
+  rank?: FriendCallRank;
   nth: number;
   seen: number;
   matchedBy: SeatIndex | null;

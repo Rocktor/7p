@@ -12,6 +12,7 @@ import {
   dispatch,
   effectiveRankValue,
   effectiveSuit,
+  friendCallRankForLevel,
   hostTeamSeats,
   legalCardsForSimplePlay,
   parseTrumpBid,
@@ -111,6 +112,20 @@ function stateBeforeMandatoryBottomPenalty(rank: 'J' | 'A', finalCard: Card): Ga
   };
   state.activeSeat = 1;
   state.seats[1].hand = [finalCard];
+  return state;
+}
+
+function createBuryState(levelRank: NormalRank, hand: Card[]): GameState {
+  const state = createGame(`bury-${levelRank}`);
+  state.phase = 'bury';
+  state.dealerSeat = 0;
+  state.bottomOwner = 0;
+  state.activeSeat = 0;
+  state.trumpSuit = 'spades';
+  state.dealerLevel = levelRank;
+  const bidCards = manualBidCards(`bury-${levelRank}-bid`, 'spades', levelRank, 1);
+  state.currentBid = { ...parseTrumpBid(bidCards, 0, levelRank), action: 'bid', source: 'hand' };
+  state.seats[0].hand = hand;
   return state;
 }
 
@@ -343,7 +358,7 @@ describe('7人6副牌找朋友规则', () => {
     expect(intent?.type).toBe('pass-counter');
   });
 
-  it('扣底阶段禁止扣任何A', () => {
+  it('扣底阶段只禁止扣找朋友目标牌', () => {
     let state = startSeeded('bury-a');
     const dealer = state.dealerSeat!;
     state.seats[dealer].hand.push(...forceBidCards(state, dealer));
@@ -351,7 +366,64 @@ describe('7人6副牌找朋友规则', () => {
     const hand = state.seats[dealer].hand;
     const ace = hand.find((card) => card.rank === 'A')!;
     const nonA = hand.filter((card) => card.rank !== 'A').slice(0, 8);
-    expect(() => dispatch(state, { type: 'bury', seat: dealer, cardIds: [ace, ...nonA].map((card) => card.id) })).toThrow(/A/);
+    expect(friendCallRankForLevel(state.dealerLevel)).toBe('A');
+    expect(() => dispatch(state, { type: 'bury', seat: dealer, cardIds: [ace, ...nonA].map((card) => card.id) })).toThrow(/找朋友目标牌A/);
+  });
+
+  it('打A时叫K：A作为级牌可扣，K作为朋友牌不能扣', () => {
+    const buryCardsWithK = [
+      { id: 'level-a-spade-a', deck: 0, suit: 'spades', rank: 'A' },
+      { id: 'friend-heart-k', deck: 0, suit: 'hearts', rank: 'K' },
+      ...Array.from({ length: 7 }, (_, index) => ({
+        id: `safe-a-${index}`,
+        deck: index,
+        suit: 'clubs',
+        rank: index % 2 === 0 ? '2' : '3'
+      }))
+    ] as Card[];
+    const stateWithK = createBuryState('A', buryCardsWithK);
+    expect(friendCallRankForLevel(stateWithK.dealerLevel)).toBe('K');
+    expect(() => dispatch(stateWithK, { type: 'bury', seat: 0, cardIds: buryCardsWithK.map((card) => card.id) })).toThrow(/找朋友目标牌K/);
+
+    const buryCardsWithA = [
+      { id: 'level-a-spade-a-ok', deck: 0, suit: 'spades', rank: 'A' },
+      ...Array.from({ length: 8 }, (_, index) => ({
+        id: `safe-a-ok-${index}`,
+        deck: index,
+        suit: index % 2 === 0 ? 'clubs' : 'diamonds',
+        rank: index % 2 === 0 ? '2' : '3'
+      }))
+    ] as Card[];
+    const stateWithA = createBuryState('A', buryCardsWithA);
+    expect(() => dispatch(stateWithA, { type: 'bury', seat: 0, cardIds: buryCardsWithA.map((card) => card.id) })).not.toThrow();
+  });
+
+  it('打K时K作为级牌可扣，A作为朋友牌不能扣', () => {
+    const buryCardsWithA = [
+      { id: 'level-k-spade-k', deck: 0, suit: 'spades', rank: 'K' },
+      { id: 'friend-heart-a', deck: 0, suit: 'hearts', rank: 'A' },
+      ...Array.from({ length: 7 }, (_, index) => ({
+        id: `safe-k-${index}`,
+        deck: index,
+        suit: 'clubs',
+        rank: index % 2 === 0 ? '2' : '3'
+      }))
+    ] as Card[];
+    const stateWithA = createBuryState('K', buryCardsWithA);
+    expect(friendCallRankForLevel(stateWithA.dealerLevel)).toBe('A');
+    expect(() => dispatch(stateWithA, { type: 'bury', seat: 0, cardIds: buryCardsWithA.map((card) => card.id) })).toThrow(/找朋友目标牌A/);
+
+    const buryCardsWithK = [
+      { id: 'level-k-spade-k-ok', deck: 0, suit: 'spades', rank: 'K' },
+      ...Array.from({ length: 8 }, (_, index) => ({
+        id: `safe-k-ok-${index}`,
+        deck: index,
+        suit: index % 2 === 0 ? 'clubs' : 'diamonds',
+        rank: index % 2 === 0 ? '2' : '3'
+      }))
+    ] as Card[];
+    const stateWithK = createBuryState('K', buryCardsWithK);
+    expect(() => dispatch(stateWithK, { type: 'bury', seat: 0, cardIds: buryCardsWithK.map((card) => card.id) })).not.toThrow();
   });
 
   it('支持叫某花色第N张A，打出对应A后朋友暴露并追溯暂存分', () => {
@@ -389,6 +461,43 @@ describe('7人6副牌找朋友规则', () => {
     expect(callPayload?.[0].matchedBy).toBeNull();
   });
 
+  it('打A时找朋友目标改为K，打出A不会暴露，打出K才暴露', () => {
+    let state = createGame('friend-call-level-a');
+    state.phase = 'friend-call';
+    state.dealerSeat = 0;
+    state.activeSeat = 0;
+    state.trumpSuit = 'spades';
+    state.dealerLevel = 'A';
+    state = dispatch(state, {
+      type: 'call-friends',
+      seat: 0,
+      calls: [
+        { suit: 'hearts', nth: 1 },
+        { suit: 'clubs', nth: 2 }
+      ]
+    }).state;
+
+    expect(friendCallRankForLevel(state.dealerLevel)).toBe('K');
+    expect(state.friendCalls[0].rank).toBe('K');
+    expect(state.events.find((event) => event.type === 'friend.call')?.message).toContain('hearts第1张K');
+
+    const heartAce = { id: 'heart-a-not-friend', deck: 0, suit: 'hearts', rank: 'A' } as Card;
+    state.seats[2].hand = [heartAce];
+    state.activeSeat = 2 as SeatIndex;
+    state.currentTrick = { index: 1, leader: 2 as SeatIndex, plays: [], leadShape: null, winner: null, points: 0 };
+    state = dispatch(state, { type: 'play', seat: 2 as SeatIndex, cardIds: [heartAce.id] }).state;
+    expect(state.friendCalls[0].matchedBy).toBeNull();
+
+    const heartKing = { id: 'heart-k-friend', deck: 0, suit: 'hearts', rank: 'K' } as Card;
+    state.seats[1].hand = [heartKing];
+    state.activeSeat = 1 as SeatIndex;
+    state.currentTrick = { index: 2, leader: 1 as SeatIndex, plays: [], leadShape: null, winner: null, points: 0 };
+    state = dispatch(state, { type: 'play', seat: 1 as SeatIndex, cardIds: [heartKing.id] }).state;
+
+    expect(state.friendCalls[0].matchedBy).toBe(1);
+    expect(state.events.find((event) => event.type === 'friend.reveal')?.message).toContain('heartsK');
+  });
+
   it('叫朋友不能叫主花色A', () => {
     const state = startSeeded('friend-no-trump-ace');
     const dealer = state.dealerSeat!;
@@ -403,6 +512,23 @@ describe('7人6副牌找朋友规则', () => {
         { suit: 'hearts', nth: 2 }
       ]
     })).toThrow(/主花色A/);
+  });
+
+  it('打A时叫朋友不能叫主花色K', () => {
+    const state = createGame('friend-no-trump-k');
+    state.phase = 'friend-call';
+    state.dealerSeat = 0;
+    state.activeSeat = 0;
+    state.trumpSuit = 'spades';
+    state.dealerLevel = 'A';
+    expect(() => dispatch(state, {
+      type: 'call-friends',
+      seat: 0,
+      calls: [
+        { suit: 'spades', nth: 1 },
+        { suit: 'hearts', nth: 2 }
+      ]
+    })).toThrow(/主花色K/);
   });
 
   it('三连对和四张会被识别成结构化牌型', () => {
